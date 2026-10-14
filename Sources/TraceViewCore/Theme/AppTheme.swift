@@ -45,6 +45,8 @@ protocol AppTheme {
     // Log level — badges
     func badgeBackground(for level: LogLevel) -> Color
     func badgeText(for level: LogLevel) -> Color
+    func summaryText(for level: LogLevel) -> Color
+    func rowBackground(for level: LogLevel) -> Color
 
     // Semantic
     var followingIndicator: Color { get }
@@ -66,4 +68,13 @@ extension AppTheme {
     var cardShadow: Bool { false }
     var lineNumberColor: Color { tertiaryText }
     var infoText: Color { primaryText }
+    func summaryText(for level: LogLevel) -> Color { badgeText(for: level) }
+    func rowBackground(for level: LogLevel) -> Color {
+        switch level {
+        case .critical: return criticalHighlight
+        case .error: return errorHighlight
+        case .warning: return warningHighlight
+        case .notice, .info, .debug, .unknown: return tableBackground
+        }
+    }
 }

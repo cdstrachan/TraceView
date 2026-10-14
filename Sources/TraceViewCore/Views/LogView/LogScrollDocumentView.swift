@@ -25,6 +25,7 @@ final class LogScrollDocumentView: NSView {
     private(set) var entries: FilteredEntries = .empty
     private(set) var theme: (any AppTheme)?
     private(set) var fontSize: Double = 12.0
+    private var colorLogRowsByLevel = true
 
     /// `lineNumber` of the entry that was last in the array on the
     /// previous `apply(...)`. Used to detect whether a count growth is a
@@ -307,7 +308,8 @@ final class LogScrollDocumentView: NSView {
         expandedEntryID: Int?,
         inlineExpansionEnabled: Bool,
         sourceNameForID: @escaping (UUID) -> String?,
-        horizontalScrollEnabled: Bool
+        horizontalScrollEnabled: Bool,
+        colorLogRowsByLevel: Bool
     ) {
         self.isFollowing = isFollowing
         let oldCount = self.entries.count
@@ -315,6 +317,7 @@ final class LogScrollDocumentView: NSView {
         let oldExpandedRow = expandedRow
         let fontSizeChanged = self.fontSize != fontSize
         let themeChanged = (self.theme?.name ?? "") != theme.name
+        let rowColoringChanged = self.colorLogRowsByLevel != colorLogRowsByLevel
         let countChanged = oldCount != entries.count
         let bookmarksChanged = self.bookmarkedLines != bookmarkedLines
         let rulesChanged = self.highlightRules != highlightRules
@@ -322,6 +325,7 @@ final class LogScrollDocumentView: NSView {
         self.entries = entries
         self.theme = theme
         self.fontSize = fontSize
+        self.colorLogRowsByLevel = colorLogRowsByLevel
         self.bookmarkedLines = bookmarkedLines
         if rulesChanged {
             self.highlightRules = highlightRules
@@ -433,7 +437,7 @@ final class LogScrollDocumentView: NSView {
         // entire visible viewport, disturbing rubber-band bounce
         // animations and ping-ponging during pane scroll-sync. The
         // cases below cover each axis of change:
-        let visibleStateChanged = fontSizeChanged || themeChanged
+        let visibleStateChanged = fontSizeChanged || themeChanged || rowColoringChanged
             || bookmarksChanged || rulesChanged
         if visibleStateChanged || expandedRowChanged {
             // Theme/font/bookmark-set/highlight-rule changes can affect
@@ -971,6 +975,17 @@ final class LogScrollDocumentView: NSView {
             severityColor(for: entry.level, theme: theme).setFill()
             rowRect.intersection(dirtyRect).fill()
 
+            if let timestampColumn = layout.first(where: { $0.id == .timestamp }) {
+                let timestampBand = NSRect(
+                    x: timestampColumn.x,
+                    y: rowY,
+                    width: timestampColumn.width,
+                    height: rowH
+                ).intersection(dirtyRect)
+                NSColor(theme.tableBackground).setFill()
+                timestampBand.fill()
+            }
+
             // Highlight rule overlay — 0.22-alpha tint over the message
             // column's band only. Composed over the severity background
             // so an "ERROR with ratelimit" row reads as red with an
@@ -1037,12 +1052,7 @@ final class LogScrollDocumentView: NSView {
     }
 
     private func severityColor(for level: LogLevel, theme: any AppTheme) -> NSColor {
-        switch level {
-        case .critical: return NSColor(theme.criticalHighlight)
-        case .error:    return NSColor(theme.errorHighlight)
-        case .warning:  return NSColor(theme.warningHighlight)
-        default:        return NSColor(theme.tableBackground)
-        }
+        NSColor(colorLogRowsByLevel ? theme.rowBackground(for: level) : theme.tableBackground)
     }
 
     private func attributes(

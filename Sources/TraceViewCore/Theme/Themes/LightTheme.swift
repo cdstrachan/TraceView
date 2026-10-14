@@ -37,6 +37,17 @@ struct LightTheme: AppTheme {
     var criticalHighlight: Color { Color(hex: 0xFF3B30, opacity: 0.12) }
     var warningHighlight: Color { Color(hex: 0xFF9500, opacity: 0.10) }
 
+    func rowBackground(for level: LogLevel) -> Color {
+        switch level {
+        case .critical: return Color(hex: 0xF8D7DA)
+        case .error: return Color(hex: 0xFDECEC)
+        case .warning: return Color(hex: 0xFFFAE8)
+        case .notice: return Color(hex: 0xF0F5FF)
+        case .info: return Color(hex: 0xE8FCE9)
+        case .debug, .unknown: return Color(hex: 0xF5F6F8)
+        }
+    }
+
     // Log level — text
     var errorText: Color { Color(hex: 0xD32F2F) }
     var warningText: Color { Color(hex: 0x996300) }
@@ -53,22 +64,30 @@ struct LightTheme: AppTheme {
     // Badges
     func badgeBackground(for level: LogLevel) -> Color {
         switch level {
-        case .critical: return Color(hex: 0xFF3B30)
-        case .error: return Color(hex: 0xFF3B30, opacity: 0.85)
-        case .warning: return Color(hex: 0xFF9500, opacity: 0.85)
-        case .notice: return Color(hex: 0x007AFF, opacity: 0.12)
-        case .info: return Color(hex: 0x86868B, opacity: 0.15)
-        case .debug: return Color(hex: 0xAEAEB2, opacity: 0.12)
-        case .unknown: return Color(hex: 0xAEAEB2, opacity: 0.12)
+        case .critical: return Color(hex: 0x7F0000)
+        case .error: return Color(hex: 0xF8D7DA)
+        case .warning: return Color(hex: 0xFFF0C2)
+        case .notice: return Color(hex: 0xD9E8FF)
+        case .info: return Color(hex: 0xC8FACC)
+        case .debug, .unknown: return Color(hex: 0xE5E7EB)
         }
     }
 
     func badgeText(for level: LogLevel) -> Color {
         switch level {
-        case .critical, .error, .warning: return .white
-        case .notice: return Color(hex: 0x007AFF)
-        case .info: return Color(hex: 0x6E6E73)
-        case .debug, .unknown: return Color(hex: 0xAEAEB2)
+        case .critical: return Color(hex: 0xFFFFFF)
+        case .error: return Color(hex: 0xB42318)
+        case .warning: return Color(hex: 0x8A5700)
+        case .notice: return Color(hex: 0x204A87)
+        case .info: return Color(hex: 0x185C2B)
+        case .debug, .unknown: return Color(hex: 0x374151)
+        }
+    }
+
+    func summaryText(for level: LogLevel) -> Color {
+        switch level {
+        case .critical: return badgeText(for: .error)
+        default: return badgeText(for: level)
         }
     }
 }

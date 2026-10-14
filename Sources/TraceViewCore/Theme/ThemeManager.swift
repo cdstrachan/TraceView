@@ -12,10 +12,18 @@ enum ThemeOption: String, CaseIterable, Identifiable {
 }
 
 final class ThemeManager: ObservableObject {
+    private static let colorLogRowsByLevelKey = "traceview.colorLogRowsByLevel"
+
     @Published var selectedOption: ThemeOption {
         didSet {
             UserDefaults.standard.set(selectedOption.rawValue, forKey: "traceview.theme")
             resolveTheme()
+        }
+    }
+
+    @Published var colorLogRowsByLevel: Bool {
+        didSet {
+            UserDefaults.standard.set(colorLogRowsByLevel, forKey: Self.colorLogRowsByLevelKey)
         }
     }
 
@@ -27,6 +35,7 @@ final class ThemeManager: ObservableObject {
         let saved = UserDefaults.standard.string(forKey: "traceview.theme") ?? "Console"
         let option = ThemeOption(rawValue: saved) ?? .console
         self.selectedOption = option
+        self.colorLogRowsByLevel = UserDefaults.standard.object(forKey: Self.colorLogRowsByLevelKey) as? Bool ?? true
         self.current = ConsoleTheme()
         resolveTheme()
         observeSystemAppearance()

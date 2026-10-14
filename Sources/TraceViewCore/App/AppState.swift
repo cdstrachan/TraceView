@@ -13,6 +13,8 @@ final class AppState: ObservableObject {
     /// both panes) without duplicating I/O.
     @Published var documents: [LogDocument] = []
 
+    @Published private(set) var recentFiles: [URL] = []
+
     /// Ordered doc IDs shown as tabs in the primary (left) pane.
     @Published var primaryTabOrder: [UUID] = []
 
@@ -147,8 +149,13 @@ final class AppState: ObservableObject {
     // restoreTabsOnLaunch off, so opting out doesn't leak saved state.
     static let savedOpenTabsKey = "traceview.savedOpenTabs"
     static let savedSelectedTabKey = "traceview.savedSelectedTab"
+    private static let recentFilesKey = "traceview.recentFiles"
 
     init() {
+        recentFiles = (UserDefaults.standard.stringArray(forKey: Self.recentFilesKey) ?? [])
+            .prefix(10)
+            .map { URL(fileURLWithPath: $0) }
+
         NotificationCenter.default.addObserver(
             self, selector: #selector(menuStartedTracking),
             name: NSMenu.didBeginTrackingNotification, object: nil)
@@ -491,6 +498,8 @@ final class AppState: ObservableObject {
     /// but not in the target pane's tab order, add it to that pane without
     /// re-loading.
     func openFile(at url: URL, into pane: Pane) {
+        recordRecentFile(url)
+
         if let existing = documents.first(where: {
             if case .file(let u) = $0.source { return u == url }
             return false
@@ -512,6 +521,19 @@ final class AppState: ObservableObject {
 
         let doc = LogDocument(source: .file(url), displayName: url.lastPathComponent)
         addDocument(doc, to: pane)
+    }
+
+    func clearRecentFiles() {
+        recentFiles = []
+        UserDefaults.standard.removeObject(forKey: Self.recentFilesKey)
+    }
+
+    private func recordRecentFile(_ url: URL) {
+        let fileURL = url.standardizedFileURL
+        recentFiles = ([fileURL] + recentFiles.filter {
+            $0.standardizedFileURL.path != fileURL.path
+        }).prefix(10).map { $0 }
+        UserDefaults.standard.set(recentFiles.map(\.path), forKey: Self.recentFilesKey)
     }
 
     // MARK: - Unified log streaming

@@ -24,7 +24,7 @@ struct ConsoleTheme: AppTheme {
     var primaryText: Color { Color(hex: 0x161616) }
     var secondaryText: Color { Color(hex: 0x5A5A5A) }
     var tertiaryText: Color { Color(hex: 0x9B9B9B) }
-    var timestampText: Color { Color(hex: 0x4A4A4A) }
+    var timestampText: Color { Color(hex: 0x0066CC) }
     var componentText: Color { Color(hex: 0x5A5A5A) }
 
     // Interactive
@@ -35,14 +35,26 @@ struct ConsoleTheme: AppTheme {
     var accentColor: Color { Color(hex: 0x0066CC) }
 
     // Row backgrounds
-    var errorHighlight: Color { Color(hex: 0xC4241A, opacity: 0.10) }
-    var criticalHighlight: Color { Color(hex: 0x8C1410, opacity: 0.14) }
-    var warningHighlight: Color { Color(hex: 0x9A6B00, opacity: 0.10) }
+    var errorHighlight: Color { Color(hex: 0xFDECEC) }
+    var criticalHighlight: Color { Color(hex: 0xF8D7DA) }
+    var warningHighlight: Color { Color(hex: 0xFFFAE8) }
+
+    func rowBackground(for level: LogLevel) -> Color {
+        switch level {
+        case .critical: return Color(hex: 0xF8D7DA)
+        case .error: return Color(hex: 0xFDECEC)
+        case .warning: return Color(hex: 0xFFFAE8)
+        case .notice: return Color(hex: 0xF0F5FF)
+        case .info: return Color(hex: 0xE8FCE9)
+        case .debug, .unknown: return Color(hex: 0xF5F6F8)
+        }
+    }
 
     // Level text
     var errorText: Color { Color(hex: 0x9B1D14) }
     var warningText: Color { Color(hex: 0x7A5400) }
-    var debugText: Color { Color(hex: 0x9B9B9B) }
+    var debugText: Color { Color(hex: 0x333333) }
+    var infoText: Color { Color(hex: 0x5A5A5A) }
 
     // Semantic
     var followingIndicator: Color { Color(hex: 0x267A38) }
@@ -57,25 +69,30 @@ struct ConsoleTheme: AppTheme {
     // saturated block into an already-tinted error row.
     func badgeBackground(for level: LogLevel) -> Color {
         switch level {
-        case .critical: return Color(hex: 0x8C1410, opacity: 0.16)
-        case .error:    return Color(hex: 0xC4241A, opacity: 0.14)
-        case .warning:  return Color(hex: 0x9A6B00, opacity: 0.14)
-        case .notice:   return Color(hex: 0x0066CC, opacity: 0.14)
-        case .info:     return Color(hex: 0xEDEDED)
-        case .debug:    return Color(hex: 0xEDEDED)
-        case .unknown:  return Color(hex: 0xEDEDED)
+        case .critical: return Color(hex: 0x7F0000)
+        case .error: return Color(hex: 0xF8D7DA)
+        case .warning: return Color(hex: 0xFFF0C2)
+        case .notice: return Color(hex: 0xD9E8FF)
+        case .info: return Color(hex: 0xC8FACC)
+        case .debug, .unknown: return Color(hex: 0xE5E7EB)
         }
     }
 
     func badgeText(for level: LogLevel) -> Color {
         switch level {
-        case .critical: return Color(hex: 0x8C1410)
-        case .error:    return Color(hex: 0x9B1D14)
-        case .warning:  return Color(hex: 0x7A5400)
-        case .notice:   return Color(hex: 0x0066CC)
-        case .info:     return Color(hex: 0x5A5A5A)
-        case .debug:    return Color(hex: 0x9B9B9B)
-        case .unknown:  return Color(hex: 0x9B9B9B)
+        case .critical: return Color(hex: 0xFFFFFF)
+        case .error: return Color(hex: 0xB42318)
+        case .warning: return Color(hex: 0x8A5700)
+        case .notice: return Color(hex: 0x204A87)
+        case .info: return Color(hex: 0x185C2B)
+        case .debug, .unknown: return Color(hex: 0x374151)
+        }
+    }
+
+    func summaryText(for level: LogLevel) -> Color {
+        switch level {
+        case .critical: return badgeText(for: .error)
+        default: return badgeText(for: level)
         }
     }
 }

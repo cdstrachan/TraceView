@@ -21,7 +21,7 @@ enum Formatters {
         countFormatter.string(from: NSNumber(value: count)) ?? "\(count)"
     }
 
-    /// Format timestamp for log display: "10:23:01.442"
+    /// Format timestamp for log display: "2026-04-06 10:23:01.442"
     static func formatTimestamp(_ date: Date) -> String {
         timestampFormatter.string(from: date)
     }
@@ -42,7 +42,7 @@ enum Formatters {
     private static let timestampFormatter: DateFormatter = {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
-        f.dateFormat = "HH:mm:ss.SSS"
+        f.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
         return f
     }()
 

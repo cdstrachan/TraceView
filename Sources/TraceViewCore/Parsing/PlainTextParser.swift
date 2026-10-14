@@ -39,7 +39,7 @@ struct PlainTextParser: LogParser {
     // all. [^\[]+? for the process name tolerates multi-word process names
     // like "Installer Progress" that \S+? would truncate.
     private static let datedSyslogPattern: NSRegularExpression? = try? NSRegularExpression(
-        pattern: #"^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[+-]\d{2}(?::?\d{2})?)?)\s+([A-Za-z0-9][A-Za-z0-9._-]*)\s+([^\[]+?)(?:\[\d+\])?(?:\s*<\w+>)?:\s*(.*)"#
+        pattern: #"^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:[+-]\d{2}(?::?\d{2})?)?)\s+([A-Za-z0-9][A-Za-z0-9._-]*)\s+([^\[]+?)(?:\[\d+\])?(?:\s*<\w+>)?:\s*(.*)"#
     )
 
     // Bracketed timestamp optionally followed by a bracketed or prefix-
@@ -60,7 +60,7 @@ struct PlainTextParser: LogParser {
     //   3: optional separate bracket tag ("info")
     //   4: rest of line
     private static let bracketedTimestampPattern: NSRegularExpression? = try? NSRegularExpression(
-        pattern: #"^\[(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)(?:\s+([^\]]+))?\]\s*(?:\[([^\]]+)\]\s*)?(.*)"#
+        pattern: #"^\[(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?)(?:\s+([^\]]+))?\]\s*(?:\[([^\]]+)\]\s*)?(.*)"#
     )
 
     // Prefix-tagged: a bracketed prefix before an ISO timestamp.
@@ -68,7 +68,7 @@ struct PlainTextParser: LogParser {
     // Captures: prefix (used as component), timestamp, rest (goes through
     // parseLevelAndComponent so "[info]" becomes the level).
     private static let prefixTaggedPattern: NSRegularExpression? = try? NSRegularExpression(
-        pattern: #"^\[([^\]]+)\]\s+(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)\s+(.*)"#
+        pattern: #"^\[([^\]]+)\]\s+(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?)\s+(.*)"#
     )
 
     // logfmt (Go / Docker / many CI tools):
@@ -85,14 +85,14 @@ struct PlainTextParser: LogParser {
     // This runs AFTER dated-syslog so proper host+component formats still
     // win, and BEFORE plain ISO so we get the component column populated.
     private static let datedComponentPattern: NSRegularExpression? = try? NSRegularExpression(
-        pattern: #"^(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)\s+([^\[\s:]+)(?:\[\d+\])?:\s*(.*)"#
+        pattern: #"^(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?)\s+([^\[\s:]+)(?:\[\d+\])?:\s*(.*)"#
     )
 
     // Plain ISO timestamp followed by arbitrary content — the most general
     // fallback when a line just starts with a timestamp. Everything after
     // goes through parseLevelAndComponent to extract bracketed level hints.
     private static let isoPattern: NSRegularExpression? = try? NSRegularExpression(
-        pattern: #"^(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)\s+(.*)"#
+        pattern: #"^(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?)\s+(.*)"#
     )
 
     // Captures three groups: level, optional component, message. Component
@@ -192,17 +192,18 @@ struct PlainTextParser: LogParser {
     }
 
     private static func parseDatedSyslog(_ s: String) -> Date? {
+        let normalized = s.replacingOccurrences(of: ",", with: ".")
         // ISO8601DateFormatter requires a 'T' separator. Skipping it for
         // space-separated dated-syslog timestamps (install.log etc.) saves
         // ~0.5s on a 32K-line install.log because every line otherwise pays
         // for two guaranteed-miss ISO attempts. T-separated callers (logfmt,
         // ISO fallback) keep the fast path.
-        if s.contains("T") {
-            if let d = isoFormatter.date(from: s) { return d }
-            if let d = isoFormatterNoFraction.date(from: s) { return d }
+        if normalized.contains("T") {
+            if let d = isoFormatter.date(from: normalized) { return d }
+            if let d = isoFormatterNoFraction.date(from: normalized) { return d }
         }
         for f in datedSyslogFormatters {
-            if let d = f.date(from: s) { return d }
+            if let d = f.date(from: normalized) { return d }
         }
         return nil
     }

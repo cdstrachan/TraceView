@@ -57,18 +57,14 @@ struct SeveritySummaryBar: View {
             }
         }()
 
-        let accent: Color = {
+        let levelColors: (text: Color, row: Color)? = {
             switch target {
-            case .all: return theme.primaryText
-            case .level(.critical): return theme.badgeBackground(for: .critical)
-            case .level(.error):    return theme.errorText
-            case .level(.warning):  return theme.warningText
-            case .level(.notice):   return theme.accentColor
-            case .level(.info):     return theme.primaryText
-            case .level(.debug):    return theme.tertiaryText
-            case .level(.unknown):  return theme.tertiaryText
+            case .all: return nil
+            case .level(let level):
+                return (theme.summaryText(for: level), theme.rowBackground(for: level))
             }
         }()
+        let accent = levelColors?.text ?? theme.primaryText
 
         let isActive = isActiveChip(target)
 
@@ -83,7 +79,7 @@ struct SeveritySummaryBar: View {
                 Text(label.uppercased())
                     .font(.system(size: 9, weight: .medium))
                     .tracking(0.5)
-                    .foregroundStyle(theme.tertiaryText)
+                    .foregroundStyle(levelColors?.text ?? theme.primaryText)
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 4)
@@ -91,7 +87,7 @@ struct SeveritySummaryBar: View {
             .frame(height: 38)
             .background(
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(isActive ? accent.opacity(0.08) : theme.tableBackground)
+                    .fill(levelColors?.row ?? theme.tableBackground)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 6)

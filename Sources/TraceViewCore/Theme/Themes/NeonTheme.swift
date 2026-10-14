@@ -37,6 +37,17 @@ struct NeonTheme: AppTheme {
     var criticalHighlight: Color { Color(hex: 0xFF0040, opacity: 0.20) }
     var warningHighlight: Color { Color(hex: 0xFFE000, opacity: 0.12) }
 
+    func rowBackground(for level: LogLevel) -> Color {
+        switch level {
+        case .critical: return Color(hex: 0x3B1728)
+        case .error: return Color(hex: 0x351B24)
+        case .warning: return Color(hex: 0x382C12)
+        case .notice: return Color(hex: 0x142C3A)
+        case .info: return Color(hex: 0x153321)
+        case .debug, .unknown: return Color(hex: 0x252A34)
+        }
+    }
+
     // Log level — text
     var errorText: Color { Color(hex: 0xFF4070) }
     var warningText: Color { Color(hex: 0xFFE000) }
@@ -53,23 +64,23 @@ struct NeonTheme: AppTheme {
     // Badges
     func badgeBackground(for level: LogLevel) -> Color {
         switch level {
-        case .critical: return Color(hex: 0xFF0040)
-        case .error: return Color(hex: 0xFF0040, opacity: 0.85)
-        case .warning: return Color(hex: 0xFFE000, opacity: 0.80)
-        case .notice: return Color(hex: 0x00D4FF, opacity: 0.20)
-        case .info: return Color(hex: 0x4A4A6A, opacity: 0.30)
-        case .debug: return Color(hex: 0x4A4A6A, opacity: 0.15)
-        case .unknown: return Color(hex: 0x4A4A6A, opacity: 0.15)
+        case .critical: return Color(hex: 0xA3003B)
+        case .error: return Color(hex: 0x5A2432)
+        case .warning: return Color(hex: 0x594414)
+        case .notice: return Color(hex: 0x173B4C)
+        case .info: return Color(hex: 0x1D4930)
+        case .debug, .unknown: return Color(hex: 0x37394B)
         }
     }
 
     func badgeText(for level: LogLevel) -> Color {
         switch level {
-        case .critical, .error: return .white
-        case .warning: return Color(hex: 0x0D0D12)
-        case .notice: return Color(hex: 0x00D4FF)
-        case .info: return Color(hex: 0x7878A0)
-        case .debug, .unknown: return Color(hex: 0x4A4A6A)
+        case .critical: return Color(hex: 0xFFFFFF)
+        case .error: return Color(hex: 0xFFD9E2)
+        case .warning: return Color(hex: 0xFFE9A6)
+        case .notice: return Color(hex: 0xA9EDFF)
+        case .info: return Color(hex: 0xB7FFD0)
+        case .debug, .unknown: return Color(hex: 0xE1E3F0)
         }
     }
 }

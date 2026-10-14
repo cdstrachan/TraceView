@@ -165,7 +165,8 @@ struct LogScrollView: NSViewRepresentable {
             expandedEntryID: expandedEntryID,
             inlineExpansionEnabled: inlineExpansionEnabled,
             sourceNameForID: sourceNameForID,
-            horizontalMessageScroll: horizontalMessageScroll
+            horizontalMessageScroll: horizontalMessageScroll,
+            colorLogRowsByLevel: themeManager.colorLogRowsByLevel
         )
 
         // Go-to-line: if a pending line number is set, scroll + select
@@ -568,7 +569,8 @@ final class LogScrollContainerView: NSView {
         expandedEntryID: Int?,
         inlineExpansionEnabled: Bool,
         sourceNameForID: @escaping (UUID) -> String?,
-        horizontalMessageScroll: Bool
+        horizontalMessageScroll: Bool,
+        colorLogRowsByLevel: Bool
     ) {
         let wasHorizontalMessageScroll = self.horizontalMessageScroll
         self.visibility = visibility
@@ -598,7 +600,8 @@ final class LogScrollContainerView: NSView {
             expandedEntryID: expandedEntryID,
             inlineExpansionEnabled: inlineExpansionEnabled,
             sourceNameForID: sourceNameForID,
-            horizontalScrollEnabled: horizontalMessageScroll
+            horizontalScrollEnabled: horizontalMessageScroll,
+            colorLogRowsByLevel: colorLogRowsByLevel
         )
         syncLayout()
     }

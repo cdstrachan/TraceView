@@ -20,6 +20,14 @@ final class PhaseZeroSmokeTests: XCTestCase {
         XCTAssertEqual(entry.component, "Installer")
     }
 
+    func testPlainTextParserParsesPythonLoggingTimestamp() {
+        let parser = PlainTextParser()
+        let line = "2026-08-05 11:30:16,539 INFO worker: operation complete"
+        let entry = parser.parse(line: line, lineNumber: 1, entryID: 43)
+
+        XCTAssertNotNil(entry.timestamp, "Python logging timestamps use a comma before milliseconds")
+    }
+
     // MARK: SCCMLogParser
 
     func testSCCMLogParserParsesCMTraceLine() {

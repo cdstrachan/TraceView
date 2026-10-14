@@ -72,6 +72,26 @@ public struct TraceViewApp: App {
                 Button("Open Log File...") { appState.openFile(into: .primary) }
                     .keyboardShortcut("o", modifiers: .command)
 
+                Menu("Open Recent") {
+                    if appState.recentFiles.isEmpty {
+                        Button("No Recent Logs") {}
+                            .disabled(true)
+                    } else {
+                        ForEach(appState.recentFiles, id: \.path) { url in
+                            Button(url.lastPathComponent) {
+                                appState.openFile(at: url)
+                            }
+                            .help(url.path)
+                        }
+
+                        Divider()
+
+                        Button("Clear Menu") {
+                            appState.clearRecentFiles()
+                        }
+                    }
+                }
+
                 Button("Open Log File in Right Pane...") {
                     appState.openFile(into: .secondary)
                 }
@@ -227,15 +247,22 @@ public struct TraceViewApp: App {
             // Theme menu
             CommandMenu("Theme") {
                 ForEach(ThemeOption.allCases) { option in
-                    Button(option.rawValue) {
-                        themeManager.selectedOption = option
-                    }
+                    Toggle(option.rawValue, isOn: Binding(
+                        get: { themeManager.selectedOption == option },
+                        set: { isSelected in
+                            if isSelected { themeManager.selectedOption = option }
+                        }
+                    ))
                 }
 
                 Divider()
 
                 Button("Cycle Theme") { themeManager.cycleTheme() }
                     .keyboardShortcut("t", modifiers: .command)
+
+                Divider()
+
+                Toggle("Color Log Rows by Level", isOn: $themeManager.colorLogRowsByLevel)
             }
         }
 
