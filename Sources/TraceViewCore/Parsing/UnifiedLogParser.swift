@@ -90,7 +90,8 @@ struct UnifiedLogParser: LogParser {
             id: entryID, lineNumber: lineNumber,
             timestamp: timestamp, level: level,
             message: message, component: component,
-            threadID: threadID, source: nil, rawLine: rawLine
+            threadID: threadID, source: nil, rawLine: rawLine,
+            showsRawLineInGrid: true
         )
     }
 

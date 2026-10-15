@@ -49,6 +49,12 @@ struct StatusBarView: View {
             // restore a note here.)
             EmptyView()
 
+            if case .file = document.source {
+                statusDivider(theme: theme)
+                DelimitedFormatMenu(document: document)
+                    .disabled(document.isLoading)
+            }
+
             Spacer()
 
             // SYNCED pill — only visible while the two panes are actively

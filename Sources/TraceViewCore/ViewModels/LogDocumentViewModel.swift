@@ -61,6 +61,10 @@ final class LogDocumentViewModel: ObservableObject {
         document.load()
     }
 
+    func clearFilters() {
+        filter = LogFilter()
+    }
+
     // MARK: - Append subscription
 
     private func subscribeToAppends() {
@@ -85,6 +89,15 @@ final class LogDocumentViewModel: ObservableObject {
     /// work).
     private func subscribeToLoadComplete() {
         document.$loadState
+            .handleEvents(receiveOutput: { [weak self] state in
+                if case .idle = state {
+                    self?.filterTask?.cancel()
+                    self?.filteredEntries = .empty
+                    self?.matches = []
+                    self?.currentMatchIndex = nil
+                    self?.filterScanProgress = nil
+                }
+            })
             .compactMap { state -> Void? in
                 if case .complete = state { return () }
                 return nil

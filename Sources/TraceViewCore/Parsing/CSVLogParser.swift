@@ -1,15 +1,74 @@
 import Foundation
 
-/// Parses CSV-formatted log files with a header row.
-/// Maps column headers to LogEntry fields by name matching.
-/// Note: Since LogParser.parse() is stateless per-line, we detect the header
-/// on line 1 and encode the column mapping into each subsequent parse call
-/// by re-parsing the header. For efficiency, the registry should cache parsers.
+/// Immutable sample-derived configuration keeps per-line parsing safe for
+/// indexed sources and concurrent file loads.
 struct CSVLogParser: LogParser {
     let name = "CSV"
     let supportedExtensions: Set<String> = ["csv"]
     let isLineStateless = true
     let kind: ParserKind = .csv
+    let delimiter: Character
+    let headers: [String]?
+    let headerLineNumber: Int?
+    private let timestampColumn: Int?
+    private let levelColumn: Int?
+    private let messageColumn: Int?
+    private let componentColumn: Int?
+    private let threadColumn: Int?
+
+    init(
+        delimiter: Character = ",",
+        sampleLines: [String]? = nil,
+        headerMode: DelimitedLogOptions.HeaderMode = .auto
+    ) {
+        self.delimiter = delimiter
+        // Keep the historical no-sample initializer for existing per-line callers.
+        guard let sampleLines else {
+            headers = nil
+            headerLineNumber = headerMode == .noHeaders ? nil : 1
+            timestampColumn = nil
+            levelColumn = nil
+            messageColumn = nil
+            componentColumn = nil
+            threadColumn = nil
+            return
+        }
+        let nonEmpty = sampleLines.enumerated().filter { !$0.element.isEmpty }
+        let rows = nonEmpty.map { Self.splitRow($0.element, delimiter: delimiter) }
+        let first = rows.first ?? []
+        let known = Self.timestampHeaders.union(Self.levelHeaders)
+            .union(Self.messageHeaders).union(Self.componentHeaders).union(Self.threadHeaders)
+        let normalized = first.map { $0.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) }
+        let recognized = normalized.filter { known.contains($0) }.count
+        let hasHeaders = headerMode == .headers
+            || (headerMode == .auto && recognized >= 1
+                && !first.contains(where: { Self.levelValue($0) != nil || Self.dateValue($0) != nil }))
+        headers = hasHeaders ? first : nil
+        headerLineNumber = hasHeaders ? nonEmpty.first.map { $0.offset + 1 } : nil
+        let values = hasHeaders ? Array(rows.dropFirst()) : rows
+        func named(_ names: Set<String>) -> Int? {
+            hasHeaders ? normalized.firstIndex(where: { names.contains($0) }) : nil
+        }
+        func inferred(_ matches: (String) -> Bool) -> Int? {
+            (0..<(first.count)).first { column in
+                let samples = values.compactMap { column < $0.count ? $0[column] : nil }
+                return !samples.isEmpty
+                    && samples.filter(matches).count * 5 >= samples.count * 4
+            }
+        }
+        let timestamp = named(Self.timestampHeaders) ?? inferred { Self.dateValue($0) != nil }
+        let level = named(Self.levelHeaders) ?? inferred { Self.levelValue($0) != nil }
+        timestampColumn = timestamp
+        levelColumn = level
+        let candidates = (0..<first.count).filter { $0 != timestamp && $0 != level }
+        messageColumn = named(Self.messageHeaders) ?? candidates.max { lhs, rhs in
+            let left = values.reduce(0) { $0 + (lhs < $1.count ? $1[lhs].count : 0) }
+            let right = values.reduce(0) { $0 + (rhs < $1.count ? $1[rhs].count : 0) }
+            return left < right
+        }
+        componentColumn = named(Self.componentHeaders)
+        threadColumn = named(Self.threadHeaders)
+    }
 
     private static let timestampHeaders = Set(["timestamp", "time", "datetime", "date", "ts", "@timestamp"])
     private static let levelHeaders = Set(["level", "severity", "loglevel", "log_level", "priority"])
@@ -17,32 +76,46 @@ struct CSVLogParser: LogParser {
     private static let componentHeaders = Set(["component", "source", "logger", "module", "service", "process", "category"])
     private static let threadHeaders = Set(["thread", "threadid", "thread_id", "tid"])
 
+    func canParseLegacy(sampleLines: [String]) -> Double {
+        guard sampleLines.count >= 2 else { return 0 }
+        let columns = parseCSVRow(sampleLines[0])
+        guard columns.count >= 2, parseCSVRow(sampleLines[1]).count == columns.count else { return 0 }
+        let names = Set(columns.map { $0.lowercased().trimmingCharacters(in: .whitespaces) })
+        guard !names.isDisjoint(with: Self.messageHeaders) else { return 0 }
+        return !names.isDisjoint(with: Self.levelHeaders) || !names.isDisjoint(with: Self.timestampHeaders) ? 0.8 : 0.5
+    }
+
     func canParse(sampleLines: [String]) -> Double {
         guard sampleLines.count >= 2 else { return 0.0 }
 
-        let header = sampleLines[0]
-        let columns = parseCSVRow(header)
-
-        guard columns.count >= 2 else { return 0.0 }
-
-        let lowerHeaders = Set(columns.map { $0.lowercased().trimmingCharacters(in: .whitespaces) })
-
-        let hasMessage = !lowerHeaders.isDisjoint(with: Self.messageHeaders)
-        let hasLevel = !lowerHeaders.isDisjoint(with: Self.levelHeaders)
-        let hasTimestamp = !lowerHeaders.isDisjoint(with: Self.timestampHeaders)
-
-        // Verify second line has same column count
-        let secondRow = parseCSVRow(sampleLines[1])
-        guard secondRow.count == columns.count else { return 0.0 }
-
-        if hasMessage && (hasLevel || hasTimestamp) { return 0.8 }
-        if hasMessage { return 0.5 }
-        return 0.0
+        let lines = Array(sampleLines.filter { !$0.isEmpty }.prefix(50))
+        guard lines.count >= 2,
+              !lines.contains(where: {
+                  let lead = $0.trimmingCharacters(in: .whitespaces).first
+                  return lead == "{" || lead == "["
+              }) else { return 0 }
+        let rows = lines.map(parseCSVRow)
+        guard let count = rows.first?.count, count >= 2,
+              rows.allSatisfy({ $0.count == count }) else { return 0 }
+        let configured = CSVLogParser(delimiter: delimiter, sampleLines: lines)
+        if configured.headers != nil {
+            let names = Set(rows[0].map { $0.lowercased().trimmingCharacters(in: .whitespaces) })
+            if !names.isDisjoint(with: Self.messageHeaders)
+                && (!names.isDisjoint(with: Self.levelHeaders) || !names.isDisjoint(with: Self.timestampHeaders)) {
+                return 0.8
+            }
+            if !names.isDisjoint(with: Self.messageHeaders) { return 0.5 }
+        }
+        if configured.timestampColumn != nil && configured.levelColumn != nil { return 0.75 }
+        if configured.levelColumn != nil { return 0.7 }
+        if configured.timestampColumn != nil { return 0.65 }
+        return 0
     }
 
     func parse(line: String, lineNumber: Int, entryID: Int) -> LogEntry {
-        // Line 1 is the header — return it as a debug entry
-        if lineNumber == 1 {
+        let columns = parseCSVRow(line)
+        // Keep the header visible as a debug entry.
+        if lineNumber == headerLineNumber && (headers == nil || columns == headers) {
             return LogEntry(
                 id: entryID, lineNumber: lineNumber,
                 timestamp: nil, level: .debug,
@@ -51,7 +124,6 @@ struct CSVLogParser: LogParser {
             )
         }
 
-        let columns = parseCSVRow(line)
         guard !columns.isEmpty else {
             return LogEntry(
                 id: entryID, lineNumber: lineNumber,
@@ -61,18 +133,20 @@ struct CSVLogParser: LogParser {
             )
         }
 
-        // Heuristic column extraction
-        let timestamp = findTimestamp(in: columns)
-        let level = findLevel(in: columns)
-        let component = findComponent(in: columns)
-        // Message is typically the last or longest column
-        let message = findMessage(in: columns)
+        func value(_ index: Int?) -> String? {
+            guard let index, index < columns.count else { return nil }
+            return columns[index]
+        }
+        let timestamp = value(timestampColumn).flatMap(Self.dateValue) ?? findTimestamp(in: columns)
+        let level = value(levelColumn).flatMap(Self.levelValue) ?? findLevel(in: columns)
+        let component = value(componentColumn) ?? findComponent(in: columns)
+        let message = value(messageColumn) ?? findMessage(in: columns)
 
         return LogEntry(
             id: entryID, lineNumber: lineNumber,
             timestamp: timestamp, level: level,
             message: message, component: component,
-            threadID: nil, source: nil, rawLine: line
+            threadID: value(threadColumn), source: nil, rawLine: line
         )
     }
 
@@ -93,30 +167,33 @@ struct CSVLogParser: LogParser {
 
     private func findLevel(in columns: [String]) -> LogLevel {
         for col in columns {
-            let trimmed = col.trimmingCharacters(in: .whitespaces).lowercased()
-            switch trimmed {
-            case "debug", "trace": return .debug
-            case "info", "information": return .info
-            case "notice": return .notice
-            case "warn", "warning": return .warning
-            case "error", "err": return .error
-            case "fatal", "critical": return .critical
-            default: continue
-            }
+            if let level = Self.levelValue(col) { return level }
         }
         return LevelDetector.detect(in: columns.joined(separator: " "))
+    }
+
+    private static func levelValue(_ value: String) -> LogLevel? {
+        switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "debug", "trace": return .debug
+        case "info", "information": return .info
+        case "notice": return .notice
+        case "warn", "warning": return .warning
+        case "error", "err": return .error
+        case "fatal", "critical": return .critical
+        default: return nil
+        }
     }
 
     private func findTimestamp(in columns: [String]) -> Date? {
         for col in columns.prefix(3) {
             let trimmed = col.trimmingCharacters(in: .whitespaces)
-            if let date = parseDate(trimmed) { return date }
+            if let date = Self.dateValue(trimmed) { return date }
         }
         return nil
     }
 
     private func isTimestamp(_ str: String) -> Bool {
-        parseDate(str.trimmingCharacters(in: .whitespaces)) != nil
+        Self.dateValue(str) != nil
     }
 
     private func isLevel(_ str: String) -> Bool {
@@ -133,6 +210,7 @@ struct CSVLogParser: LogParser {
             "yyyy-MM-dd'T'HH:mm:ss.SSSZ",
             "yyyy-MM-dd'T'HH:mm:ssZ",
             "yyyy-MM-dd HH:mm:ss.SSS",
+            "yyyy-MM-dd HH:mm:ss,SSS",
             "yyyy-MM-dd HH:mm:ss",
             "MM/dd/yyyy HH:mm:ss",
         ].map { format in
@@ -143,27 +221,42 @@ struct CSVLogParser: LogParser {
         }
     }()
 
-    private func parseDate(_ str: String) -> Date? {
+    private static func dateValue(_ value: String) -> Date? {
+        let str = value.trimmingCharacters(in: .whitespacesAndNewlines)
         for f in Self.dateFormatters {
             if let date = f.date(from: str) { return date }
         }
         return nil
     }
 
-    private func parseCSVRow(_ line: String) -> [String] {
+    func parseCSVRow(_ line: String) -> [String] {
+        Self.splitRow(line, delimiter: delimiter)
+    }
+
+    private static func splitRow(_ line: String, delimiter: Character) -> [String] {
         var columns: [String] = []
         var current = ""
         var inQuotes = false
 
-        for char in line {
+        var index = line.startIndex
+        while index < line.endIndex {
+            let char = line[index]
+            let next = line.index(after: index)
             if char == "\"" {
-                inQuotes.toggle()
-            } else if char == "," && !inQuotes {
+                if inQuotes && next < line.endIndex && line[next] == "\"" {
+                    current.append("\"")
+                    index = line.index(after: next)
+                    continue
+                } else {
+                    inQuotes.toggle()
+                }
+            } else if char == delimiter && !inQuotes {
                 columns.append(current)
                 current = ""
             } else {
                 current.append(char)
             }
+            index = next
         }
         columns.append(current)
         return columns

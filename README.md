@@ -9,11 +9,17 @@ Additions on top of the upstream project:
 - **Severity row colouring** — log rows are tinted by severity (critical, error, warning) consistently across the Console, Light, Dark and Neon themes, and the severity summary chips use matching per-level colours. This is configurable via the theme menu.
 - **Theme-coloured histogram bars** — error, warning and info segments in the histogram use the active theme's severity colours.
 - **Full date in timestamps** — the timestamp column shows `yyyy-MM-dd HH:mm:ss.SSS` instead of time only.
-- **Python logging timestamps** — the plain-text parser accepts comma-separated milliseconds (e.g. `2026-04-06 10:23:01,442`), as written by Python's `logging` module.
+- **Python logging timestamps** — the plain-text and delimited-log parsers accept comma-separated milliseconds (e.g. `2026-04-06 10:23:01,442`), as written by Python's `logging` module.
 - **Resizable histogram** — drag the handle under the histogram to make it taller (28–180 pt); the height is remembered.
 - **Histogram hover times** — moving across the histogram shows the time range of the slot under the pointer, and the tooltip shows the full date/time range plus event count.
 - **Histogram zoom** — drag across a time range to zoom into it, or scroll the mouse wheel over the strip (up zooms in around the cursor, down zooms out a level). The histogram re-buckets into 60 slots for the zoomed range, in both in-memory and indexed (large-file) modes.
 - **Zoom Out / Zoom All controls** — step back one zoom level or reset to the full time range. The selected range is shown while dragging, and the start, end and centre labels share the same larger font.
+- **Readable parsed details** — the bottom detail pane pretty-prints full JSON records (or JSON messages in text logs) with darker, theme-aware syntax colors for keys, strings, numbers, and literals, and displays CSV records as labeled fields using the file's headers. JSON inside CSV fields is also formatted and colored. Copy preserves the displayed formatting as plain text; Raw still shows and copies the original record.
+- **Full JSON in the grid** — structured JSON and unified-log rows show the complete raw record in the Message column, while parsed metadata and the bottom detail pane remain available.
+- **Resizable bottom detail pane** — drag the handle above the record details up or down to resize the pane. Its height is remembered across launches and adapts to the window size while keeping the log grid visible.
+- **Resizable sidebar** — drag the right edge of the files-and-bookmarks sidebar to adjust its width (180–300 pt), with a resize cursor and a larger grab area. The width is remembered across launches.
+- **Flexible delimited logs** — local files (including `.gz`) auto-detect comma, semicolon, tab, and pipe separators. The status-bar format menu lets you choose a separator, including hyphen or a custom single character, and remembers the choice per file. Headers are detected automatically; headerless logs infer timestamp, severity, and message columns, with generic `Column N` labels in details. Use *First row → Headers / No headers* to correct ambiguous detection. Raw records remain unchanged and exports still use standard comma-separated CSV.
+- **Clear Filters** — use *Filter → Clear Filters* or right-click the log grid (including empty space) to reset text, severity, component, and merged-source filters for that pane. Regex and case-sensitive options reset too; saved presets and the Filter/Find mode are unchanged.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![macOS 14+](https://img.shields.io/badge/macOS-14%2B-black.svg?logo=apple)](#requirements)
@@ -47,6 +53,22 @@ Real-time file following, severity-aware highlighting, built-in error-code looku
 - **Themes** — Console (default), Light, Dark, Neon.
 - **Auto-update** — checks for new versions on launch and every 24 hours via [Sparkle](https://sparkle-project.org/), downloads + verifies them (Developer ID + EdDSA signatures), installs after a confirm prompt, and relaunches. Toggle in Settings → Updates, or check manually from the *About TraceView* menu.
 - **Keyboard shortcuts** — `Cmd+O` open · `Cmd+Shift+O` open in right pane · `Cmd+F` search · `Cmd+G` / `Cmd+Shift+G` next/previous match · `Cmd+L` go to line · `Cmd+D` toggle bookmark · `Cmd+Opt+R` toggle regex matching · `Cmd+Shift+L` error lookup · `Cmd+\` toggle split view · `Cmd+Shift+S` toggle pane sync · `Cmd+Shift+E` export · `Cmd+K` command palette · `Cmd+T` cycle theme. Full list in [spec.md](spec.md#keyboard-shortcuts).
+
+### Delimited log formats
+
+Open a header-based file such as `timestamp;level;message` followed by
+`2026-10-15 12:00:00;info;"Started; waiting"` and TraceView detects the
+semicolon separator without splitting the quoted message. Headerless records
+such as `2026-10-15 12:00:00|error|Connection failed` are also detected.
+
+For less common separators, open the **format menu in the status bar** and
+choose a preset or **Custom separator…**. Hyphen is manual-only so dates and
+ordinary text are not mistaken for delimited records. Separator and first-row
+preferences are saved for the original file, including compressed files.
+**Automatic format** clears both overrides. These controls apply to local
+files, not live streams or merged documents (configure their original files).
+Each record must occupy one physical line; multiline quoted records are not
+supported. Newlines and double quotes cannot be custom separators.
 
 ## Screenshots
 

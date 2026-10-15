@@ -30,6 +30,7 @@ struct LogScrollView: NSViewRepresentable {
     let themeManager: ThemeManager
     var onCopy: (LogEntry) -> Void = { _ in }
     var onFilterToComponent: (LogEntry) -> Void = { _ in }
+    var onClearFilters: () -> Void = {}
     var onLookupErrorCode: (String) -> Void = { _ in }
     var onToggleBookmark: (LogEntry) -> Void = { _ in }
     var onScrollUp: () -> Void = {}
@@ -82,6 +83,9 @@ struct LogScrollView: NSViewRepresentable {
         }
         container.documentView.onFilterToComponent = { [weak coordinator = context.coordinator] entry in
             coordinator?.onFilterToComponent(entry)
+        }
+        container.documentView.onClearFilters = { [weak coordinator = context.coordinator] in
+            coordinator?.onClearFilters()
         }
         // Expansion toggle writes back through the binding.
         container.documentView.onExpansionToggled = { [weak coordinator = context.coordinator] id in
@@ -144,6 +148,7 @@ struct LogScrollView: NSViewRepresentable {
         context.coordinator.fontSize = fontSize
         context.coordinator.onCopy = onCopy
         context.coordinator.onFilterToComponent = onFilterToComponent
+        context.coordinator.onClearFilters = onClearFilters
         context.coordinator.onLookupErrorCode = onLookupErrorCode
 
         let visibility = ColumnVisibility(
@@ -199,6 +204,7 @@ struct LogScrollView: NSViewRepresentable {
         var fontSize: Double = 12.0
         var onCopy: (LogEntry) -> Void = { _ in }
         var onFilterToComponent: (LogEntry) -> Void = { _ in }
+        var onClearFilters: () -> Void = {}
         var onLookupErrorCode: (String) -> Void = { _ in }
 
         /// Build the `NSHostingView` for a row's expanded detail. Called

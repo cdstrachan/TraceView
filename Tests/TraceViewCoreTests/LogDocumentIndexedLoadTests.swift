@@ -56,6 +56,139 @@ final class LogDocumentIndexedLoadTests: XCTestCase {
 
     // MARK: - Flag drives source selection
 
+    func testCSVDetailHeadersInMemoryAndIndexedModes() {
+        let url = writeTempFile(
+            contents: "level,message,\"extra, field\"\ninfo,hello,42\n",
+            suffix: "csv"
+        )
+        for threshold in [0, 1] {
+            UserDefaults.standard.set(threshold, forKey: SettingsManager.indexedModeThresholdKey)
+            let doc = loadAndWait(url: url)
+            XCTAssertEqual(doc.entrySource is IndexedEntrySource, threshold == 1)
+            XCTAssertEqual(doc.csvHeaders, ["level", "message", "extra, field"])
+            guard let record = doc.entrySource.entry(at: 1) else {
+                XCTFail("Missing CSV record")
+                continue
+            }
+            XCTAssertEqual(
+                ParsedLogDetail(entry: record, csvHeaders: doc.csvHeaders).copyText,
+                "level: info\nmessage: hello\nextra, field: 42"
+            )
+        }
+    }
+
+    func testAlternateSeparatorsAndHeaderlessFilesInBothModes() throws {
+        for contents in [
+            "level;message\ninfo;hello\nerror;bye\n",
+            "2026-10-15 12:00:00|error|First message\n2026-10-15 12:01:00|info|Next message\n"
+        ] {
+            let url = writeTempFile(contents: contents)
+            for threshold in [0, 1] {
+                UserDefaults.standard.set(threshold, forKey: SettingsManager.indexedModeThresholdKey)
+                let doc = loadAndWait(url: url)
+                XCTAssertEqual(doc.entrySource is IndexedEntrySource, threshold == 1)
+                let parser = try XCTUnwrap(doc.delimitedParser)
+                let first = try XCTUnwrap(doc.entrySource.entry(at: 0))
+                XCTAssertEqual(first.rawLine, contents.components(separatedBy: "\n")[0])
+                if parser.headers == nil {
+                    XCTAssertEqual(first.message, "First message")
+                    XCTAssertEqual(first.level, .error)
+                } else {
+                    XCTAssertEqual(doc.entrySource.entry(at: 1)?.message, "hello")
+                }
+            }
+        }
+    }
+
+    func testPythonSemicolonTimestampsInBothLoadingModes() throws {
+        let url = writeTempFile(contents:
+            "2026-07-17 14:17:16,115;DEBUG;Loading KWallet\n"
+            + "2026-07-17 14:17:16,120;DEBUG;Loading macOS\n"
+        )
+        for threshold in [0, 1] {
+            UserDefaults.standard.set(threshold, forKey: SettingsManager.indexedModeThresholdKey)
+            let document = loadAndWait(url: url)
+            XCTAssertEqual(document.entrySource is IndexedEntrySource, threshold == 1)
+            XCTAssertEqual(document.delimitedParser?.delimiter, ";")
+            XCTAssertTrue(document.hasTimestamps)
+            let first = try XCTUnwrap(document.entrySource.entry(at: 0))
+            let last = try XCTUnwrap(document.entrySource.entry(at: 1))
+            let date = try XCTUnwrap(first.timestamp)
+            XCTAssertEqual(try XCTUnwrap(last.timestamp).timeIntervalSince(date), 0.005, accuracy: 0.0001)
+            XCTAssertEqual(first.message, "Loading KWallet")
+            XCTAssertEqual(first.level, .debug)
+        }
+    }
+
+    func testFormatOverrideReloadsAndPersistsOnReopen() throws {
+        UserDefaults.standard.set(1, forKey: SettingsManager.indexedModeThresholdKey)
+        let url = writeTempFile(contents: "level-message\ninfo-hello\nerror-bye\n")
+        defer { try? SettingsManager.saveDelimitedOptions(DelimitedLogOptions(), for: url) }
+        let doc = loadAndWait(url: url)
+        let viewModel = LogDocumentViewModel(document: doc)
+        let complete = expectation(description: "format reload")
+        doc.$loadState.dropFirst().sink { state in
+            if case .complete = state { complete.fulfill() }
+        }.store(in: &cancellables)
+        try doc.setDelimitedOptions(.init(delimiter: "-", headerMode: .headers))
+        wait(for: [complete], timeout: 5)
+        XCTAssertEqual(doc.delimitedParser?.delimiter, "-")
+        XCTAssertEqual(doc.entrySource.entry(at: 1)?.message, "hello")
+        XCTAssertEqual(viewModel.filteredEntries.count, doc.entrySource.count)
+        let reopened = loadAndWait(url: url)
+        XCTAssertEqual(reopened.delimitedParser?.delimiter, "-")
+        XCTAssertEqual(reopened.delimitedOptions.headerMode, .headers)
+    }
+
+    func testCompressedDelimitedFileUsesOriginalFilePreferences() throws {
+        let original = writeTempFile(contents: "level;message\ninfo;hello\n")
+        let compressed = original.appendingPathExtension("gz")
+        temporaryFiles.append(compressed)
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/gzip")
+        process.arguments = ["-c", original.path]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        try process.run()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        XCTAssertEqual(process.terminationStatus, 0)
+        try data.write(to: compressed)
+        try SettingsManager.saveDelimitedOptions(.init(delimiter: ";"), for: compressed)
+        defer { try? SettingsManager.saveDelimitedOptions(DelimitedLogOptions(), for: compressed) }
+        let document = loadAndWait(url: compressed)
+        XCTAssertTrue(document.isCompressed)
+        XCTAssertEqual(document.delimitedOptions.delimiter, ";")
+        XCTAssertEqual(document.entrySource.entry(at: 1)?.message, "hello")
+    }
+
+    func testMergedSourceDetailsAndFormatReloadRefresh() throws {
+        let url = writeTempFile(contents: "timestamp;level;message\n2026-10-15 12:00:00;info;hello\n")
+        defer { try? SettingsManager.saveDelimitedOptions(DelimitedLogOptions(), for: url) }
+        let source = loadAndWait(url: url)
+        let otherURL = writeTempFile(contents: "2026-10-15 12:01:00|error|Other message\n2026-10-15 12:02:00|info|Next message\n")
+        let other = loadAndWait(url: otherURL)
+        let merged = LogDocument(mergedSources: [source, other], displayName: "Test merge")
+        let initial = expectation(description: "initial merge")
+        let initialSubscription = merged.$loadState.sink { state in
+            if case .complete = state { initial.fulfill() }
+        }
+        merged.load()
+        wait(for: [initial], timeout: 5)
+        initialSubscription.cancel()
+        XCTAssertEqual(merged.entrySource.count, 3)
+        let entry = try XCTUnwrap(merged.entries.first { $0.sourceDocumentID == source.id })
+        XCTAssertTrue(ParsedLogDetail(entry: entry, csvParser: source.delimitedParser).copyText.contains("message: hello"))
+        let refreshed = expectation(description: "refreshed merge")
+        merged.$loadState.dropFirst().sink { state in
+            if case .complete = state { refreshed.fulfill() }
+        }.store(in: &cancellables)
+        try source.setDelimitedOptions(.init(delimiter: "|", headerMode: .headers))
+        wait(for: [refreshed], timeout: 5)
+        XCTAssertEqual(merged.entrySource.count, 2)
+        XCTAssertTrue(merged.entries.allSatisfy { $0.sourceDocumentID == other.id })
+    }
+
     func testForceFlagSelectsIndexedSourceForEligibleParser() throws {
         // PlainText / BSD syslog — isLineStateless == true.
         let lines = (0..<200).map { "Jan 01 10:00:00 host proc[1]: msg \($0)" }

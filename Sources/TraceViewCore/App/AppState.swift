@@ -600,6 +600,8 @@ final class AppState: ObservableObject {
     /// menu (which is global) can reach the per-pane VM via the same
     /// active-pane gating used by ⌘D / ⌘G.
     @Published var pendingRegexToggleTick: Int = 0
+    @Published var pendingClearFiltersTick: Int = 0
+    func clearFilters() { pendingClearFiltersTick += 1 }
     func toggleRegex() {
         pendingRegexToggleTick += 1
     }

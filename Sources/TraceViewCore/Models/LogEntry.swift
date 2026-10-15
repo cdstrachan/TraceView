@@ -10,6 +10,9 @@ struct LogEntry: Identifiable {
     let threadID: String?
     let source: String?
     let rawLine: String
+    var showsRawLineInGrid = false
+
+    var gridMessage: String { showsRawLineInGrid ? rawLine : message }
 
     // Populated only on entries that came from a merged-view source. Lets
     // the merged view show the origin doc and supports "Open in Source Log"

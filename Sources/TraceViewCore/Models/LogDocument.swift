@@ -26,6 +26,32 @@ final class LogDocument: ObservableObject, Identifiable {
     // the view tree. Panes subscribe to `didAppend` for incremental updates.
     var entries: [LogEntry] { entrySource.allEntries }
 
+    var csvHeaders: [String]? {
+        delimitedParser?.headers
+    }
+
+    var delimitedParser: CSVLogParser? { parser as? CSVLogParser }
+    @Published private(set) var delimitedOptions = DelimitedLogOptions()
+    @Published private(set) var formatName = "Auto"
+
+    func setDelimitedOptions(_ options: DelimitedLogOptions) throws {
+        guard case .file(let url) = source else {
+            throw NSError(domain: "TraceView.Delimiter", code: 2,
+                          userInfo: [NSLocalizedDescriptionKey: "Format overrides require a local file."])
+        }
+        try SettingsManager.saveDelimitedOptions(options, for: url)
+        delimitedOptions = options
+        reload()
+    }
+
+    private func publishFormat(_ parser: any LogParser) {
+        if let csv = parser as? CSVLogParser {
+            formatName = "\(DelimitedLogOptions.delimiterName(csv.delimiter)) · \(csv.headers == nil ? "No headers" : "Headers")"
+        } else {
+            formatName = parser.name
+        }
+    }
+
     // Per-append signal with the newly-appended slice. Pane view models
     // incrementally filter this and append to their own filteredEntries.
     // Republished from the entry source through a document-owned subject
@@ -286,7 +312,7 @@ final class LogDocument: ObservableObject, Identifiable {
     /// returns the highest-confidence parser. Returns nil if the file
     /// can't be opened, contains no UTF-8-decodable prefix, or has no
     /// non-empty lines.
-    private static func detectParserFromPrefix(url: URL) -> (any LogParser)? {
+    private static func detectParserFromPrefix(url: URL, options: DelimitedLogOptions) -> (any LogParser)? {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? handle.close() }
         let prefixData: Data
@@ -297,12 +323,13 @@ final class LogDocument: ObservableObject, Identifiable {
         }
         guard !prefixData.isEmpty,
               let text = String(data: prefixData, encoding: .utf8) else { return nil }
-        let lines = text.components(separatedBy: .newlines)
-            .prefix(50)
-            .filter { !$0.isEmpty }
-            .map { String($0) }
+        var prefixLines = text.components(separatedBy: .newlines)
+        if prefixData.count == 65536 && !text.hasSuffix("\n") && !text.hasSuffix("\r") {
+            prefixLines.removeLast()
+        }
+        let lines = Array(prefixLines.prefix(50))
         guard !lines.isEmpty else { return nil }
-        return ParserRegistry.shared.detectParser(sampleLines: lines)
+        return ParserRegistry.shared.detectParser(sampleLines: lines, delimitedOptions: options)
     }
 
     // MARK: - Loading
@@ -346,7 +373,12 @@ final class LogDocument: ObservableObject, Identifiable {
         parseGeneration &+= 1   // invalidate any in-flight chunk callbacks
         histogramTask?.cancel()
         histogramTask = nil
-        entrySource.reset()
+        if entrySource is IndexedEntrySource {
+            // Indexed sources are immutable; reset() intentionally does nothing.
+            entrySource = InMemoryEntrySource()
+        } else {
+            entrySource.reset()
+        }
         nextEntryID = 0
         lastReadOffset = 0
         partialLineBuffer = ""
@@ -365,6 +397,8 @@ final class LogDocument: ObservableObject, Identifiable {
     @MainActor
     private func loadFile() async {
         guard case .file(let url) = source else { return }
+        let options = SettingsManager.delimitedOptions(for: url)
+        delimitedOptions = options
 
         #if DEBUG
         let timer = LoadPerfTimer(label: displayName)
@@ -394,7 +428,7 @@ final class LogDocument: ObservableObject, Identifiable {
         // parse.
         let fileSize = Self.fileSizeBytes(url: url)
         if Self.shouldUseIndexedMode(fileSize: fileSize) && !compressed,
-           let prefixParser = Self.detectParserFromPrefix(url: url),
+           let prefixParser = Self.detectParserFromPrefix(url: url, options: options),
            prefixParser.isLineStateless {
             await loadFileIndexed(url: url, parser: prefixParser, generation: myGen)
             return
@@ -443,10 +477,13 @@ final class LogDocument: ObservableObject, Identifiable {
             timer.mark("split")
             #endif
 
-            let sampleLines = lines.prefix(50)
-                .filter { !$0.isEmpty }
-                .map { String($0) }
-            let parser = ParserRegistry.shared.detectParser(sampleLines: sampleLines)
+            let sampleLines = Array(lines.prefix(50))
+            let parser = ParserRegistry.shared.detectParser(sampleLines: sampleLines, delimitedOptions: options)
+            await MainActor.run { [weak self] in
+                guard let self, self.parseGeneration == myGen else { return }
+                self.parser = parser
+                self.publishFormat(parser)
+            }
             #if DEBUG
             timer.mark("detect")
             #endif
@@ -685,6 +722,7 @@ final class LogDocument: ObservableObject, Identifiable {
                 // build invariant) so the sink is dormant but in place.
                 self.entrySource = newSource
                 self.parser = parser
+                self.publishFormat(parser)
                 self.fileSize = UInt64(totalBytes)
                 self.lastReadOffset = UInt64(totalBytes)
                 // entryID == row index for indexed; the next "free" id
@@ -732,6 +770,7 @@ final class LogDocument: ObservableObject, Identifiable {
         fileSize = UInt64(dataCount)
         lastReadOffset = UInt64(dataCount)
         self.parser = parser
+        publishFormat(parser)
         self.nextEntryID = nextID
         loadState = .complete
 
@@ -796,6 +835,7 @@ final class LogDocument: ObservableObject, Identifiable {
                 threadID: entry.threadID,
                 source: entry.source,
                 rawLine: entry.rawLine,
+                showsRawLineInGrid: entry.showsRawLineInGrid,
                 sourceDocumentID: entry.sourceDocumentID,
                 sourceLineNumber: entry.sourceLineNumber
             ))
@@ -814,6 +854,17 @@ final class LogDocument: ObservableObject, Identifiable {
                 .sink { [weak self, weak source] newEntries in
                     guard let self, let source else { return }
                     self.appendMerged(from: source, newEntries: newEntries)
+                }
+                .store(in: &mergedAppendCancellables)
+            source.$loadState
+                .dropFirst()
+                .sink { [weak self] state in
+                    guard case .complete = state, let self else { return }
+                    self.mergedAppendCancellables.removeAll()
+                    self.entrySource.reset()
+                    self.nextEntryID = 0
+                    self.loadState = .idle
+                    Task { @MainActor [weak self] in self?.loadMerged() }
                 }
                 .store(in: &mergedAppendCancellables)
         }
@@ -838,6 +889,7 @@ final class LogDocument: ObservableObject, Identifiable {
                 threadID: entry.threadID,
                 source: entry.source,
                 rawLine: entry.rawLine,
+                showsRawLineInGrid: entry.showsRawLineInGrid,
                 sourceDocumentID: source.id,
                 sourceLineNumber: entry.lineNumber
             ))

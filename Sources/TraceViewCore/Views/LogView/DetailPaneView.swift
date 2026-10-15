@@ -2,6 +2,7 @@ import SwiftUI
 
 struct DetailPaneView: View {
     let entry: LogEntry
+    let csvParser: CSVLogParser?
     let onClose: () -> Void
     @EnvironmentObject var themeManager: ThemeManager
     @EnvironmentObject var settingsManager: SettingsManager
@@ -9,6 +10,7 @@ struct DetailPaneView: View {
 
     var body: some View {
         let theme = themeManager.current
+        let detail = ParsedLogDetail(entry: entry, csvParser: csvParser)
 
         VStack(alignment: .leading, spacing: 0) {
             // Header bar
@@ -52,7 +54,7 @@ struct DetailPaneView: View {
 
                 // Copy button
                 Button {
-                    let text = showRawLine ? entry.rawLine : entry.message
+                    let text = showRawLine ? entry.rawLine : detail.copyText
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(text, forType: .string)
                 } label: {
@@ -86,12 +88,33 @@ struct DetailPaneView: View {
             // Message body — scales with the table-row font setting so
             // ⌘= / ⌘- affects this pane in lockstep with the rows above.
             ScrollView {
-                Text(showRawLine ? entry.rawLine : entry.message)
-                    .font(.system(size: settingsManager.fontSize, design: .monospaced))
-                    .foregroundStyle(theme.primaryText)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(10)
+                Group {
+                    if showRawLine {
+                        Text(entry.rawLine)
+                    } else {
+                        switch detail {
+                        case .text(let text):
+                            Text(JSONSyntaxHighlighter.highlight(text, theme: theme))
+                        case .fields(let fields):
+                            Grid(alignment: .topLeading, horizontalSpacing: 16, verticalSpacing: 8) {
+                                ForEach(fields.indices, id: \.self) { index in
+                                    GridRow(alignment: .top) {
+                                        Text(fields[index].label)
+                                            .foregroundStyle(theme.secondaryText)
+                                            .fontWeight(.medium)
+                                        Text(JSONSyntaxHighlighter.highlight(fields[index].value, theme: theme))
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                .font(.system(size: settingsManager.fontSize, design: .monospaced))
+                .foregroundStyle(theme.primaryText)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(10)
             }
             .background(theme.tableBackground)
         }

@@ -168,6 +168,9 @@ public struct TraceViewApp: App {
                     .keyboardShortcut("r", modifiers: [.command, .option])
                     .disabled(appState.selectedDocument(in: appState.activePane) == nil)
 
+                Button("Clear Filters") { appState.clearFilters() }
+                    .disabled(appState.selectedDocument(in: appState.activePane) == nil)
+
                 Divider()
 
                 Button("Go to Line...") { appState.showGoToLine = true }

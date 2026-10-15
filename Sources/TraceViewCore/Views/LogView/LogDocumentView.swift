@@ -16,6 +16,8 @@ struct LogDocumentView: View {
     @State private var spinnerShownAt: Date?
     @State private var histogramBarHeight = CGFloat(SettingsManager.defaultHistogramHeight)
     @State private var histogramDragStartHeight: CGFloat?
+    @State private var detailPaneHeight = CGFloat(SettingsManager.defaultDetailPaneHeight)
+    @State private var detailDragStartHeight: CGFloat?
     let pane: Pane
 
     init(document: LogDocument, pane: Pane = .primary) {
@@ -46,45 +48,53 @@ struct LogDocumentView: View {
             Divider().background(theme.border)
 
             // Log table + detail pane
-            VStack(spacing: 0) {
-                ZStack(alignment: .bottomTrailing) {
-                    loadingOverlay(theme: theme)
-                    streamErrorOverlay(theme: theme)
+            GeometryReader { geometry in
+                VStack(spacing: 0) {
+                    ZStack(alignment: .bottomTrailing) {
+                        loadingOverlay(theme: theme)
+                        streamErrorOverlay(theme: theme)
 
-                    logTable()
+                        logTable()
 
-                    // Jump to bottom button
-                    if !document.isFollowing {
-                        Button {
-                            appState.setFollowing(pane: pane, following: true)
-                        } label: {
-                            HStack(spacing: 4) {
-                                Image(systemName: "arrow.down.to.line")
-                                    .font(.system(size: 10, weight: .medium))
-                                Text("Jump to Bottom")
-                                    .font(.system(size: 11, weight: .medium))
+                        // Jump to bottom button
+                        if !document.isFollowing {
+                            Button {
+                                appState.setFollowing(pane: pane, following: true)
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "arrow.down.to.line")
+                                        .font(.system(size: 10, weight: .medium))
+                                    Text("Jump to Bottom")
+                                        .font(.system(size: 11, weight: .medium))
+                                }
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(theme.accentColor)
+                                .clipShape(Capsule())
+                                .shadow(color: .black.opacity(0.3), radius: 4, y: 2)
                             }
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background(theme.accentColor)
-                            .clipShape(Capsule())
-                            .shadow(color: .black.opacity(0.3), radius: 4, y: 2)
+                            .buttonStyle(.plain)
+                            .padding(.trailing, 16)
+                            .padding(.bottom, 8)
                         }
-                        .buttonStyle(.plain)
-                        .padding(.trailing, 16)
-                        .padding(.bottom, 8)
                     }
-                }
 
-                // Bottom detail pane (only in .bottomPane mode). Inline
-                // expansion lands as a per-row drawer in both renderers
-                // now, so the new view no longer falls back here.
-                if settingsManager.detailDisplayMode == .bottomPane, let entry = selectedEntry {
-                    Divider().background(theme.border)
+                    // Bottom detail pane (only in .bottomPane mode). Inline
+                    // expansion lands as a per-row drawer in both renderers
+                    // now, so the new view no longer falls back here.
+                    if settingsManager.detailDisplayMode == .bottomPane, let entry = selectedEntry {
+                        detailResizeHandle(availableHeight: geometry.size.height)
 
-                    DetailPaneView(entry: entry, onClose: { selectedEntry = nil })
-                        .frame(minHeight: 80, idealHeight: 120, maxHeight: 250)
+                        DetailPaneView(
+                            entry: entry,
+                            csvParser: (entry.sourceDocumentID.flatMap { sourceID in
+                                appState.documents.first { $0.id == sourceID }
+                            } ?? document).delimitedParser,
+                            onClose: { selectedEntry = nil }
+                        )
+                        .frame(height: clampedDetailHeight(detailPaneHeight, availableHeight: geometry.size.height))
+                    }
                 }
             }
 
@@ -95,11 +105,19 @@ struct LogDocumentView: View {
         }
         .onAppear {
             histogramBarHeight = CGFloat(settingsManager.histogramHeight)
+            detailPaneHeight = CGFloat(settingsManager.detailPaneHeight)
             viewModel.findMode = settingsManager.defaultFindMode
             viewModel.load()
         }
         .onChange(of: settingsManager.histogramHeight) { _, newHeight in
             histogramBarHeight = CGFloat(newHeight)
+        }
+        .onChange(of: settingsManager.detailPaneHeight) { _, newHeight in
+            detailPaneHeight = CGFloat(newHeight)
+        }
+        .onChange(of: document.delimitedOptions) { _, _ in
+            selectedEntry = nil
+            expandedEntryID = nil
         }
         .task(id: document.isLoading) {
             // Spinner debounce. .task(id:) auto-cancels and restarts on each
@@ -142,6 +160,10 @@ struct LogDocumentView: View {
             guard pane == appState.activePane else { return }
             viewModel.filter.isRegex.toggle()
         }
+        .onChange(of: appState.pendingClearFiltersTick) { _, _ in
+            guard pane == appState.activePane else { return }
+            viewModel.clearFilters()
+        }
         .onChange(of: appState.pendingFindStepTick) { _, _ in
             // ⌘G is a no-op in filter mode by design (matches is empty
             // there) — users switch to Find via the labeled mode toggle
@@ -167,6 +189,39 @@ struct LogDocumentView: View {
             )
             .environmentObject(themeManager)
         }
+    }
+
+    private func clampedDetailHeight(_ height: CGFloat, availableHeight: CGFloat) -> CGFloat {
+        // Leave room for the log grid and the six-point resize handle.
+        let maximum = max(0, availableHeight - 106)
+        return min(max(height, CGFloat(SettingsManager.minimumDetailPaneHeight)), maximum)
+    }
+
+    private func detailResizeHandle(availableHeight: CGFloat) -> some View {
+        HistogramResizeHandle(
+            onDragStart: {
+                detailDragStartHeight = clampedDetailHeight(detailPaneHeight, availableHeight: availableHeight)
+            },
+            onDrag: { delta in
+                guard let start = detailDragStartHeight else { return }
+                detailPaneHeight = clampedDetailHeight(start - delta, availableHeight: availableHeight)
+            },
+            onDragEnd: {
+                settingsManager.detailPaneHeight = Double(max(
+                    detailPaneHeight, CGFloat(SettingsManager.minimumDetailPaneHeight)
+                ))
+                detailDragStartHeight = nil
+            }
+        )
+        .frame(height: 6)
+        .background(themeManager.current.filterBarBackground)
+        .overlay {
+            Capsule()
+                .fill(themeManager.current.borderSubtle)
+                .frame(width: 32, height: 2)
+                .allowsHitTesting(false)
+        }
+        .hoverTooltip("Drag to resize detail pane", edge: .top)
     }
 
     private var histogramSection: some View {
@@ -246,6 +301,10 @@ struct LogDocumentView: View {
                 if let comp = entry.component {
                     viewModel.filter.component = comp
                 }
+            },
+            onClearFilters: {
+                appState.activePane = pane
+                viewModel.clearFilters()
             },
             onLookupErrorCode: { code in
                 appState.lookupErrorCode(code)

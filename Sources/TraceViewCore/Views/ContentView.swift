@@ -24,6 +24,10 @@ struct ContentView: View {
             // from SettingsManager. Done once per view lifetime; subsequent
             // drag updates go straight to the local @State.
             primaryPaneWidth = CGFloat(settingsManager.primaryPaneWidth)
+            sidebarWidth = CGFloat(settingsManager.sidebarWidth)
+        }
+        .onChange(of: settingsManager.sidebarWidth) { _, width in
+            sidebarWidth = clampedSidebarWidth(CGFloat(width))
         }
         .background(WindowAccessor())
         .overlay {
@@ -93,6 +97,7 @@ struct ContentView: View {
                 sidebarColumn
                     .frame(width: sidebarWidth)
                 sidebarResizeDivider
+                    .zIndex(1)
             }
             detailContent
                 .frame(minWidth: 500, maxWidth: .infinity, maxHeight: .infinity)
@@ -107,38 +112,28 @@ struct ContentView: View {
     }
 
     private var sidebarResizeDivider: some View {
-        Rectangle()
-            .fill(themeManager.current.border)
-            .frame(width: 1)
+        PaneDividerHandle(
+            onDragStart: {
+                sidebarDragStartWidth = sidebarWidth
+            },
+            onDrag: { delta in
+                guard let start = sidebarDragStartWidth else { return }
+                sidebarWidth = clampedSidebarWidth(start + delta)
+            },
+            onDragEnd: {
+                settingsManager.sidebarWidth = Double(sidebarWidth)
+                sidebarDragStartWidth = nil
+            }
+        )
+            .frame(width: SidebarLayout.dividerHitWidth)
+            .background(themeManager.current.sidebarBackground)
             .overlay {
                 Rectangle()
-                    .fill(.clear)
-                    .frame(width: SidebarLayout.dividerHitWidth)
-                    .contentShape(Rectangle())
-                    .gesture(
-                        DragGesture()
-                            .onChanged { value in
-                                // Always re-assign — the previous `if nil`
-                                // guard could leak a stale start width if the
-                                // divider was removed mid-drag (e.g. user
-                                // toggled the sidebar via shortcut while
-                                // dragging). onEnded doesn't fire when the
-                                // gesture's host view disappears, so the next
-                                // drag's first onChanged would compute against
-                                // the stale start and the divider would jump.
-                                let startWidth = sidebarDragStartWidth ?? sidebarWidth
-                                sidebarDragStartWidth = startWidth
-                                sidebarWidth = clampedSidebarWidth(startWidth + value.translation.width)
-                            }
-                            .onEnded { _ in
-                                sidebarDragStartWidth = nil
-                            }
-                    )
-                    // Recover from the same stale-start scenario by clearing
-                    // dragStart whenever the divider re-appears. Cheap and
-                    // covers the toggle-during-drag edge case.
-                    .onAppear { sidebarDragStartWidth = nil }
+                    .fill(themeManager.current.border)
+                    .frame(width: 1)
+                    .allowsHitTesting(false)
             }
+            .hoverTooltip("Drag to resize sidebar")
     }
 
     @ViewBuilder
@@ -410,9 +405,9 @@ struct ContentView: View {
     }
 
     private enum SidebarLayout {
-        static let minWidth: CGFloat = 180
-        static let defaultWidth: CGFloat = 220
-        static let maxWidth: CGFloat = 300
+        static let minWidth = CGFloat(SettingsManager.minimumSidebarWidth)
+        static let defaultWidth = CGFloat(SettingsManager.defaultSidebarWidth)
+        static let maxWidth = CGFloat(SettingsManager.maximumSidebarWidth)
         static let dividerHitWidth: CGFloat = 8
     }
 

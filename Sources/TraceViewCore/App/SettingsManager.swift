@@ -1,7 +1,45 @@
 import SwiftUI
 import Combine
+import OSLog
 
 final class SettingsManager: ObservableObject {
+    private static let delimitedFilesKey = "traceview.delimitedFiles"
+    private static let formatLogger = Logger(subsystem: "com.traceview.app", category: "DelimitedFiles")
+
+    static func delimitedOptions(for url: URL, defaults: UserDefaults = .standard) -> DelimitedLogOptions {
+        do {
+            let options = try delimitedPreferences(defaults: defaults)[url.standardizedFileURL.absoluteString]
+                ?? DelimitedLogOptions()
+            guard options.isValid else {
+                formatLogger.error("Invalid saved delimiter preference; using automatic detection.")
+                return DelimitedLogOptions()
+            }
+            return options
+        } catch {
+            formatLogger.error("Cannot read delimiter preferences: \(error.localizedDescription)")
+            return DelimitedLogOptions()
+        }
+    }
+
+    static func saveDelimitedOptions(
+        _ options: DelimitedLogOptions, for url: URL, defaults: UserDefaults = .standard
+    ) throws {
+        if let delimiter = options.delimiter,
+           let message = DelimitedLogOptions.validationError(for: delimiter) {
+            throw NSError(domain: "TraceView.Delimiter", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: message])
+        }
+        var preferences = try delimitedPreferences(defaults: defaults)
+        let key = url.standardizedFileURL.absoluteString
+        preferences[key] = options == DelimitedLogOptions() ? nil : options
+        defaults.set(try JSONEncoder().encode(preferences), forKey: delimitedFilesKey)
+    }
+
+    private static func delimitedPreferences(defaults: UserDefaults) throws -> [String: DelimitedLogOptions] {
+        guard let data = defaults.data(forKey: delimitedFilesKey) else { return [:] }
+        return try JSONDecoder().decode([String: DelimitedLogOptions].self, from: data)
+    }
+
     private static let fontSizeKey = "traceview.fontSize"
     private static let showLineNumbersKey = "traceview.showLineNumbers"
     private static let showTimestampKey = "traceview.showTimestamp"
@@ -13,7 +51,14 @@ final class SettingsManager: ObservableObject {
     private static let highlightRulesKey = "traceview.highlightRules"
     private static let findModeKey = "traceview.findMode"
     private static let primaryPaneWidthKey = "traceview.primaryPaneWidth"
+    private static let sidebarWidthKey = "traceview.sidebarWidth"
+    static let defaultSidebarWidth: Double = 220
+    static let minimumSidebarWidth: Double = 180
+    static let maximumSidebarWidth: Double = 300
     private static let histogramHeightKey = "traceview.histogramHeight"
+    private static let detailPaneHeightKey = "traceview.detailPaneHeight"
+    static let defaultDetailPaneHeight: Double = 250
+    static let minimumDetailPaneHeight: Double = 80
     static let restoreTabsOnLaunchKey = "traceview.restoreTabsOnLaunch"
     static let defaultHistogramHeight: Double = 28
     static let minimumHistogramHeight: Double = 28
@@ -112,8 +157,16 @@ final class SettingsManager: ObservableObject {
         didSet { UserDefaults.standard.set(primaryPaneWidth, forKey: Self.primaryPaneWidthKey) }
     }
 
+    @Published var sidebarWidth: Double {
+        didSet { UserDefaults.standard.set(sidebarWidth, forKey: Self.sidebarWidthKey) }
+    }
+
     @Published var histogramHeight: Double {
         didSet { UserDefaults.standard.set(histogramHeight, forKey: Self.histogramHeightKey) }
+    }
+
+    @Published var detailPaneHeight: Double {
+        didSet { UserDefaults.standard.set(detailPaneHeight, forKey: Self.detailPaneHeightKey) }
     }
 
     @Published var restoreTabsOnLaunch: Bool {
@@ -229,6 +282,11 @@ final class SettingsManager: ObservableObject {
         let savedPaneWidth = defaults.double(forKey: Self.primaryPaneWidthKey)
         self.primaryPaneWidth = savedPaneWidth >= 200 ? savedPaneWidth : 640
 
+        let savedSidebarWidth = defaults.double(forKey: Self.sidebarWidthKey)
+        self.sidebarWidth = savedSidebarWidth.isFinite && savedSidebarWidth > 0
+            ? min(max(savedSidebarWidth, Self.minimumSidebarWidth), Self.maximumSidebarWidth)
+            : Self.defaultSidebarWidth
+
         let savedHistogramHeight = defaults.double(forKey: Self.histogramHeightKey)
         if savedHistogramHeight > 0 {
             self.histogramHeight = min(
@@ -238,6 +296,11 @@ final class SettingsManager: ObservableObject {
         } else {
             self.histogramHeight = Self.defaultHistogramHeight
         }
+
+        let savedDetailPaneHeight = defaults.double(forKey: Self.detailPaneHeightKey)
+        self.detailPaneHeight = savedDetailPaneHeight.isFinite
+            && savedDetailPaneHeight >= Self.minimumDetailPaneHeight
+            ? savedDetailPaneHeight : Self.defaultDetailPaneHeight
 
         // Phase 5.5 indexed-mode controls.
         self.indexedModeEnabled = !defaults.bool(forKey: Self.disableIndexedModeKey)

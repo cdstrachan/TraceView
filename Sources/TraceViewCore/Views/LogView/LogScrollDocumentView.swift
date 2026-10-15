@@ -127,6 +127,7 @@ final class LogScrollDocumentView: NSView {
     var onToggleBookmark: (LogEntry) -> Void = { _ in }
     var onOpenInSourceLog: (LogEntry) -> Void = { _ in }
     var onFilterToComponent: (LogEntry) -> Void = { _ in }
+    var onClearFilters: () -> Void = {}
 
     /// Entry the right-click context menu was built for. NSMenu doesn't
     /// pass the originating event into the menu-item action, so we cache
@@ -493,9 +494,10 @@ final class LogScrollDocumentView: NSView {
     /// when a color comes back.
     private func highlightColor(for entry: LogEntry) -> NSColor? {
         guard !compiledHighlights.isEmpty else { return nil }
-        let range = NSRange(entry.message.startIndex..., in: entry.message)
+        let message = entry.gridMessage
+        let range = NSRange(message.startIndex..., in: message)
         for (rule, regex) in compiledHighlights {
-            if regex.firstMatch(in: entry.message, range: range) != nil {
+            if regex.firstMatch(in: message, range: range) != nil {
                 return NSColor(rule.color)
             }
         }
@@ -541,7 +543,7 @@ final class LogScrollDocumentView: NSView {
 
         var widest: CGFloat = 0
         for row in start..<end {
-            let length = (entries[row].message as NSString).length
+            let length = (entries[row].gridMessage as NSString).length
             let w = CGFloat(length) * cache.messageAdvanceWidth
             if w > widest { widest = w }
         }
@@ -769,7 +771,16 @@ final class LogScrollDocumentView: NSView {
 
     override func menu(for event: NSEvent) -> NSMenu? {
         let p = convert(event.locationInWindow, from: nil)
-        guard let row = rowAtPoint(p) else { return nil }
+        let menu = NSMenu()
+        let clearItem = NSMenuItem(
+            title: "Clear Filters", action: #selector(clearFiltersAction(_:)), keyEquivalent: ""
+        )
+        clearItem.target = self
+        guard let row = rowAtPoint(p) else {
+            contextMenuEntry = nil
+            menu.addItem(clearItem)
+            return menu
+        }
 
         // Cache the clicked entry so the @objc action methods (which
         // can't carry payload through NSMenuItem.target/action) can read
@@ -778,7 +789,6 @@ final class LogScrollDocumentView: NSView {
         contextMenuEntry = entries[row]
         updateSelection(to: row)
 
-        let menu = NSMenu()
         let bookmarkItem = NSMenuItem(
             title: "Toggle Bookmark",
             action: #selector(toggleBookmarkAction(_:)),
@@ -819,7 +829,13 @@ final class LogScrollDocumentView: NSView {
             sourceItem.target = self
             menu.addItem(sourceItem)
         }
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(clearItem)
         return menu
+    }
+
+    @objc private func clearFiltersAction(_ sender: Any?) {
+        onClearFilters()
     }
 
     @objc private func toggleBookmarkAction(_ sender: Any?) {
@@ -1092,7 +1108,7 @@ final class LogScrollDocumentView: NSView {
             }
             return "—"
         case .message:
-            return entry.message
+            return entry.gridMessage
         }
     }
 }
