@@ -72,6 +72,9 @@ final class LogDocument: ObservableObject, Identifiable {
     // Derived summary state, computed by the document once per append and
     // read by every pane showing this doc.
     @Published private(set) var histogram: LogHistogram?
+    @Published private(set) var histogramZoomDepth = 0
+    private var histogramZoomStack: [DateInterval] = []
+    private var histogramZoomRange: DateInterval?
     /// Per-time-window peaks captured before each rebucket so spikes that
     /// would otherwise shrink as the histogram's time range stretches
     /// stay visible as faint shadows. Reset on reload / loadMerged.
@@ -348,6 +351,9 @@ final class LogDocument: ObservableObject, Identifiable {
         lastReadOffset = 0
         partialLineBuffer = ""
         histogram = nil
+        histogramZoomStack.removeAll()
+        histogramZoomDepth = 0
+        histogramZoomRange = nil
         levelCounts = [:]
         hasTimestamps = false
         hasComponents = false
@@ -755,6 +761,9 @@ final class LogDocument: ObservableObject, Identifiable {
     private func loadMerged() {
         guard !mergedSources.isEmpty else { return }
         spikePeaks.removeAll()
+        histogramZoomStack.removeAll()
+        histogramZoomRange = nil
+        histogramZoomDepth = 0
         loadState = .streaming(rowsLoaded: 0)
 
         // 1. Initial merge: pull all current entries from each source,
@@ -1085,8 +1094,10 @@ final class LogDocument: ObservableObject, Identifiable {
     // every append. Either way the actual `computeHistogram` work runs off
     // main and the result is published back. For 100K-row logs this avoids
     // a multi-100ms main-actor stall after parse completes.
-    private func recomputeHistogram(immediate: Bool) {
+    private func recomputeHistogram(immediate: Bool, capturePeaks: Bool = true) {
         guard entrySource.supportsHistogram else { return }
+
+        let visibleRange = histogramZoomRange
 
         // Phase 4 PR2 fast path: indexed sources compute the histogram
         // directly from their parallel `levels` + `timestamps` arrays.
@@ -1098,7 +1109,7 @@ final class LogDocument: ObservableObject, Identifiable {
                 guard let self else { return }
                 let buckets = Self.histogramBucketCount
                 let result = await Task.detached(priority: .userInitiated) {
-                    indexedSource.derivedHistogram(buckets: buckets)
+                    indexedSource.derivedHistogram(buckets: buckets, range: visibleRange)
                 }.value
                 guard !Task.isCancelled else { return }
                 await MainActor.run {
@@ -1139,12 +1150,19 @@ final class LogDocument: ObservableObject, Identifiable {
                 try? await Task.sleep(nanoseconds: 300_000_000)
             }
             guard let self, !Task.isCancelled else { return }
-            self.captureSpikePeaksFromCurrentHistogram()
+            if capturePeaks {
+                self.captureSpikePeaksFromCurrentHistogram()
+            }
             let snapshotEntries = self.entries
             let snapshotPeaks = self.spikePeaks
             let buckets = Self.histogramBucketCount
             let result = await Task.detached(priority: .userInitiated) {
-                Self.computeHistogram(from: snapshotEntries, peaks: snapshotPeaks, buckets: buckets)
+                Self.computeHistogram(
+                    from: snapshotEntries,
+                    peaks: snapshotPeaks,
+                    buckets: buckets,
+                    range: visibleRange
+                )
             }.value
             guard !Task.isCancelled else { return }
             await MainActor.run {
@@ -1152,6 +1170,43 @@ final class LogDocument: ObservableObject, Identifiable {
                 self.lastHistogramComputeTime = Date()
             }
         }
+    }
+
+    @MainActor
+    func zoomHistogram(to requestedRange: DateInterval) {
+        guard histogramZoomStack.count < 8,
+              let histogram,
+              requestedRange.start < requestedRange.end else { return }
+
+        let visibleStart = histogram.startTime
+        let visibleEnd = visibleStart.addingTimeInterval(
+            histogram.bucketSize * Double(histogram.bars.count)
+        )
+        let start = max(visibleStart, requestedRange.start)
+        let end = min(visibleEnd, requestedRange.end)
+        guard start < end else { return }
+
+        histogramZoomStack.append(histogramZoomRange ?? DateInterval(start: visibleStart, end: visibleEnd))
+        histogramZoomRange = DateInterval(start: start, end: end)
+        histogramZoomDepth = histogramZoomStack.count
+        recomputeHistogram(immediate: true, capturePeaks: false)
+    }
+
+    @MainActor
+    func zoomOutHistogram() {
+        guard !histogramZoomStack.isEmpty else { return }
+        histogramZoomRange = histogramZoomStack.removeLast()
+        histogramZoomDepth = histogramZoomStack.count
+        recomputeHistogram(immediate: true, capturePeaks: false)
+    }
+
+    @MainActor
+    func resetHistogramZoom() {
+        guard histogramZoomDepth > 0 else { return }
+        histogramZoomStack.removeAll()
+        histogramZoomRange = nil
+        histogramZoomDepth = 0
+        recomputeHistogram(immediate: true, capturePeaks: false)
     }
 
     /// Walks the about-to-be-replaced histogram bars, identifies spikes
@@ -1217,7 +1272,8 @@ final class LogDocument: ObservableObject, Identifiable {
     private static func computeHistogram(
         from entries: [LogEntry],
         peaks: [SpikePeak],
-        buckets: Int
+        buckets: Int,
+        range: DateInterval? = nil
     ) -> LogHistogram? {
         guard entries.count >= 10 else { return nil }
 
@@ -1239,7 +1295,9 @@ final class LogDocument: ObservableObject, Identifiable {
               let first, let last,
               last > first else { return nil }
 
-        let total = last.timeIntervalSince(first)
+        let visibleStart = max(first, range?.start ?? first)
+        let visibleEnd = min(last, range?.end ?? last)
+        let total = visibleEnd.timeIntervalSince(visibleStart)
         guard total > 0 else { return nil }
 
         let bucketSize = total / Double(buckets)
@@ -1247,7 +1305,8 @@ final class LogDocument: ObservableObject, Identifiable {
 
         for entry in entries {
             guard let ts = entry.timestamp else { continue }
-            let offset = ts.timeIntervalSince(first)
+            guard ts >= visibleStart, ts <= visibleEnd else { continue }
+            let offset = ts.timeIntervalSince(visibleStart)
             let idx = min(buckets - 1, max(0, Int(offset / bucketSize)))
             let existing = bars[idx]
             switch entry.level {
@@ -1268,7 +1327,7 @@ final class LogDocument: ObservableObject, Identifiable {
         // and keeps the shadows array minimal).
         var shadows: [LogHistogram.Shadow] = []
         for bucketIdx in 0..<buckets {
-            let bucketStart = first.addingTimeInterval(Double(bucketIdx) * bucketSize)
+            let bucketStart = visibleStart.addingTimeInterval(Double(bucketIdx) * bucketSize)
             let bucketEnd = bucketStart.addingTimeInterval(bucketSize)
             let inRangePeak = peaks
                 .filter { $0.time >= bucketStart && $0.time < bucketEnd }
@@ -1289,9 +1348,9 @@ final class LogDocument: ObservableObject, Identifiable {
         return LogHistogram(
             bars: bars,
             maxTotal: effectiveMaxTotal,
-            startLabel: formatter.string(from: first),
-            endLabel: formatter.string(from: last),
-            startTime: first,
+            startLabel: formatter.string(from: visibleStart),
+            endLabel: formatter.string(from: visibleEnd),
+            startTime: visibleStart,
             bucketSize: bucketSize,
             shadows: shadows
         )

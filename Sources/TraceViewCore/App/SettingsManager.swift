@@ -13,7 +13,11 @@ final class SettingsManager: ObservableObject {
     private static let highlightRulesKey = "traceview.highlightRules"
     private static let findModeKey = "traceview.findMode"
     private static let primaryPaneWidthKey = "traceview.primaryPaneWidth"
+    private static let histogramHeightKey = "traceview.histogramHeight"
     static let restoreTabsOnLaunchKey = "traceview.restoreTabsOnLaunch"
+    static let defaultHistogramHeight: Double = 28
+    static let minimumHistogramHeight: Double = 28
+    static let maximumHistogramHeight: Double = 180
     /// Phase 5 hidden emergency opt-out. Set via `defaults write
     /// com.traceview.app traceview.disableIndexedMode -bool YES` to
     /// force every file through the eager in-memory loader regardless
@@ -106,6 +110,10 @@ final class SettingsManager: ObservableObject {
     /// Drag-resized via the divider between the two panes (see ContentView).
     @Published var primaryPaneWidth: Double {
         didSet { UserDefaults.standard.set(primaryPaneWidth, forKey: Self.primaryPaneWidthKey) }
+    }
+
+    @Published var histogramHeight: Double {
+        didSet { UserDefaults.standard.set(histogramHeight, forKey: Self.histogramHeightKey) }
     }
 
     @Published var restoreTabsOnLaunch: Bool {
@@ -220,6 +228,16 @@ final class SettingsManager: ObservableObject {
         // here (200pt) just to reject genuinely broken saved values.
         let savedPaneWidth = defaults.double(forKey: Self.primaryPaneWidthKey)
         self.primaryPaneWidth = savedPaneWidth >= 200 ? savedPaneWidth : 640
+
+        let savedHistogramHeight = defaults.double(forKey: Self.histogramHeightKey)
+        if savedHistogramHeight > 0 {
+            self.histogramHeight = min(
+                max(savedHistogramHeight, Self.minimumHistogramHeight),
+                Self.maximumHistogramHeight
+            )
+        } else {
+            self.histogramHeight = Self.defaultHistogramHeight
+        }
 
         // Phase 5.5 indexed-mode controls.
         self.indexedModeEnabled = !defaults.bool(forKey: Self.disableIndexedModeKey)

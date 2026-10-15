@@ -93,6 +93,36 @@ final class IndexedEntrySourceDerivedStatsTests: XCTestCase {
         XCTAssertGreaterThan(histo.maxTotal, 0)
     }
 
+    func testDerivedHistogramCanRebucketSelectedTimeRange() throws {
+        let lines = (0..<100).map { i -> String in
+            let minute = String(format: "%02d", i / 60)
+            let second = String(format: "%02d", i % 60)
+            return "Apr 22 10:\(minute):\(second) host proc[1] <Info>: row \(i)"
+        }
+        let url = writeTempFile(contents: lines.joined(separator: "\n") + "\n")
+        let source = try IndexedEntrySource(fileURL: url, parser: PlainTextParser())
+        guard let full = source.derivedHistogram(buckets: 10) else {
+            XCTFail("Expected full-range histogram")
+            return
+        }
+
+        let selectedStart = full.timeRange(forBucket: 3).start
+        let selectedEnd = full.timeRange(forBucket: 6).end
+        guard let zoomed = source.derivedHistogram(
+            buckets: 10,
+            range: DateInterval(start: selectedStart, end: selectedEnd)
+        ) else {
+            XCTFail("Expected histogram for selected time range")
+            return
+        }
+
+        XCTAssertEqual(zoomed.startTime, selectedStart)
+        XCTAssertEqual(zoomed.bars.count, 10)
+        let zoomedTotal = zoomed.bars.reduce(0) { $0 + $1.total }
+        XCTAssertGreaterThan(zoomedTotal, 0)
+        XCTAssertLessThan(zoomedTotal, 100)
+    }
+
     func testDerivedHistogramReturnsNilWhenNoTimestampsCaptured() throws {
         // CSV parserKind skips timestamp capture entirely. Even though
         // the underlying lines have parseable dates, the source's

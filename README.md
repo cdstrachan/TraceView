@@ -1,4 +1,5 @@
 # TraceView
+NOTE: This is a fork of https://github.com/thefinder808/TraceView
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![macOS 14+](https://img.shields.io/badge/macOS-14%2B-black.svg?logo=apple)](#requirements)

@@ -75,7 +75,7 @@ final class IndexedEntrySource: EntrySource {
     /// `HistogramView` consumes both transparently. Spike peaks are not
     /// produced (the source is static-after-build; rebucketing rounds
     /// don't happen, so the shadow projection isn't meaningful).
-    func derivedHistogram(buckets: Int) -> LogHistogram? {
+    func derivedHistogram(buckets: Int, range: DateInterval? = nil) -> LogHistogram? {
         guard let timestamps = logIndex.timestamps, buckets > 0 else { return nil }
 
         var first: Double = .greatestFiniteMagnitude
@@ -94,14 +94,18 @@ final class IndexedEntrySource: EntrySource {
             return nil
         }
 
-        let totalSpan = last - first
+        let visibleStart = max(first, range?.start.timeIntervalSince1970 ?? first)
+        let visibleEnd = min(last, range?.end.timeIntervalSince1970 ?? last)
+        guard visibleEnd > visibleStart else { return nil }
+
+        let totalSpan = visibleEnd - visibleStart
         let bucketSize = totalSpan / Double(buckets)
         var bars = Array(repeating: LogHistogram.Bar(err: 0, warn: 0, info: 0), count: buckets)
 
         for i in 0..<total {
             let ts = timestamps[i]
-            guard ts.isFinite else { continue }
-            let offset = ts - first
+            guard ts.isFinite, ts >= visibleStart, ts <= visibleEnd else { continue }
+            let offset = ts - visibleStart
             let idx = min(buckets - 1, max(0, Int(offset / bucketSize)))
             let level = FastLevelScanner.decode(logIndex.levels[i])
             let existing = bars[idx]
@@ -116,8 +120,8 @@ final class IndexedEntrySource: EntrySource {
         }
 
         let maxTotal = bars.map(\.total).max() ?? 1
-        let firstDate = Date(timeIntervalSince1970: first)
-        let lastDate = Date(timeIntervalSince1970: last)
+        let firstDate = Date(timeIntervalSince1970: visibleStart)
+        let lastDate = Date(timeIntervalSince1970: visibleEnd)
         let formatter = totalSpan > 86400
             ? Self.histogramLabelFormatterLong
             : Self.histogramLabelFormatterShort

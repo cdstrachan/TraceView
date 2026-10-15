@@ -13,10 +13,16 @@ struct HistogramView: View {
     /// time range to a concrete entry and navigates. Disabled state is
     /// naturally handled by the histogram being hidden.
     var onBucketClick: (Int) -> Void = { _ in }
+    var barHeight: CGFloat = CGFloat(SettingsManager.defaultHistogramHeight)
+    var zoomDepth: Int = 0
+    var onZoom: (DateInterval) -> Void = { _ in }
+    var onZoomOut: () -> Void = {}
+    var onZoomAll: () -> Void = {}
 
     @State private var hoveredBucket: Int?
-
-    private let stripHeight: CGFloat = 28
+    @State private var selectionStartX: CGFloat?
+    @State private var selectionEndX: CGFloat?
+    @State private var selectionChartWidth: CGFloat = 1
 
     var body: some View {
         let theme = themeManager.current
@@ -37,12 +43,77 @@ struct HistogramView: View {
 
     @ViewBuilder
     private func barStrip(bins: LogHistogram, theme: any AppTheme) -> some View {
-        HStack(alignment: .bottom, spacing: 1) {
-            ForEach(bins.bars.indices, id: \.self) { i in
-                interactiveBar(index: i, bins: bins, theme: theme)
+        GeometryReader { geometry in
+            ZStack(alignment: .leading) {
+                HStack(alignment: .bottom, spacing: 1) {
+                    ForEach(bins.bars.indices, id: \.self) { i in
+                        interactiveBar(index: i, bins: bins, theme: theme)
+                    }
+                }
+
+                if let selectionStartX, let selectionEndX {
+                    Rectangle()
+                        .fill(theme.accentColor.opacity(0.22))
+                        .overlay {
+                            Rectangle().stroke(theme.accentColor, lineWidth: 1)
+                        }
+                        .frame(width: abs(selectionEndX - selectionStartX))
+                        .offset(x: min(selectionStartX, selectionEndX))
+                        .allowsHitTesting(false)
+                }
             }
+            .contentShape(Rectangle())
+            .onContinuousHover { phase in
+                switch phase {
+                case .active(let location):
+                    guard geometry.size.width > 0, !bins.bars.isEmpty else { return }
+                    let fraction = min(max(location.x / geometry.size.width, 0), 1)
+                    hoveredBucket = min(
+                        bins.bars.count - 1,
+                        Int(fraction * CGFloat(bins.bars.count))
+                    )
+                case .ended:
+                    hoveredBucket = nil
+                }
+            }
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 8)
+                    .onChanged { value in
+                        selectionChartWidth = geometry.size.width
+                        if selectionStartX == nil {
+                            selectionStartX = boundedX(value.startLocation.x, width: geometry.size.width)
+                        }
+                        selectionEndX = boundedX(value.location.x, width: geometry.size.width)
+                    }
+                    .onEnded { value in
+                        let width = geometry.size.width
+                        let startX = selectionStartX ?? boundedX(value.startLocation.x, width: width)
+                        let endX = boundedX(value.location.x, width: width)
+                        selectionStartX = nil
+                        selectionEndX = nil
+                        selectionChartWidth = 1
+
+                        if abs(endX - startX) < 8 {
+                            let fraction = width > 0 ? endX / width : 0
+                            let index = min(
+                                bins.bars.count - 1,
+                                max(0, Int(fraction * CGFloat(bins.bars.count)))
+                            )
+                            onBucketClick(index)
+                        } else if width > 0 {
+                            let duration = bins.bucketSize * Double(bins.bars.count)
+                            let startFraction = Double(min(startX, endX) / width)
+                            let endFraction = Double(max(startX, endX) / width)
+                            let rangeStart = bins.startTime.addingTimeInterval(duration * startFraction)
+                            let rangeEnd = bins.startTime.addingTimeInterval(duration * endFraction)
+                            if rangeStart < rangeEnd {
+                                onZoom(DateInterval(start: rangeStart, end: rangeEnd))
+                            }
+                        }
+                    }
+            )
         }
-        .frame(height: stripHeight)
+        .frame(height: barHeight)
         .background(theme.borderSubtle)
         .clipShape(RoundedRectangle(cornerRadius: 3))
         .overlay(alignment: .trailing) {
@@ -82,13 +153,49 @@ struct HistogramView: View {
 
     @ViewBuilder
     private func rangeLabels(bins: LogHistogram, theme: any AppTheme) -> some View {
-        HStack {
+        HStack(spacing: 10) {
             Text(bins.startLabel)
-                .font(.system(size: 9, weight: .regular, design: .monospaced))
+                .font(.system(size: 11, weight: .regular, design: .monospaced))
                 .foregroundStyle(theme.tertiaryText)
-            Spacer()
+
+            Spacer(minLength: 4)
+
+            Text(
+                selectedRangeLabel(bins: bins)
+                    ?? hoveredSlotLabel(bins: bins)
+                    ?? (zoomDepth > 0 ? "Zoomed range" : "Drag to zoom")
+            )
+                .font(.system(size: 11, weight: .regular, design: .monospaced))
+                .foregroundStyle(theme.tertiaryText)
+                .lineLimit(1)
+                .fixedSize()
+
+            Spacer(minLength: 4)
+
+            Button(action: onZoomOut) {
+                Label("Zoom Out", systemImage: "minus.magnifyingglass")
+                    .font(.system(size: 11))
+                    .foregroundStyle(theme.secondaryText)
+            }
+            .buttonStyle(.plain)
+            .disabled(zoomDepth == 0)
+            .opacity(zoomDepth == 0 ? 0.45 : 1)
+            .hoverTooltip("Zoom out one level", edge: .top, delay: .milliseconds(150))
+
+            Button(action: onZoomAll) {
+                Label("Zoom All", systemImage: "arrow.up.left.and.arrow.down.right")
+                    .font(.system(size: 11))
+                    .foregroundStyle(theme.secondaryText)
+            }
+            .buttonStyle(.plain)
+            .disabled(zoomDepth == 0)
+            .opacity(zoomDepth == 0 ? 0.45 : 1)
+            .hoverTooltip("Reset histogram to show all time", edge: .top, delay: .milliseconds(150))
+
+            Spacer(minLength: 4)
+
             Text(bins.endLabel)
-                .font(.system(size: 9, weight: .regular, design: .monospaced))
+                .font(.system(size: 11, weight: .regular, design: .monospaced))
                 .foregroundStyle(theme.tertiaryText)
         }
     }
@@ -117,6 +224,10 @@ struct HistogramView: View {
         GeometryReader { geo in
             let fullH = geo.size.height
             let barH = fullH * heightFactor
+            let total = CGFloat(max(bar.total, 1))
+            let errorHeight = barH * CGFloat(bar.err) / total
+            let warningHeight = barH * CGFloat(bar.warn) / total
+            let infoHeight = barH * CGFloat(bar.info) / total
             ZStack {
                 // Hover column highlight — covers the full bucket cell,
                 // not just the bar height, so tiny buckets are still an
@@ -128,25 +239,18 @@ struct HistogramView: View {
 
                 VStack(spacing: 0) {
                     Spacer(minLength: 0)
-                    ZStack(alignment: .bottom) {
+                    VStack(spacing: 0) {
                         Rectangle()
-                            .fill(theme.tertiaryText.opacity(isHovered ? 0.55 : 0.35))
-                            .frame(height: barH)
-                        VStack(spacing: 0) {
-                            if bar.err > 0 {
-                                Rectangle()
-                                    .fill(theme.errorText)
-                                    .frame(height: barH * (Double(bar.err) / Double(max(bar.total, 1))))
-                            }
-                            if bar.warn > 0 {
-                                Rectangle()
-                                    .fill(theme.warningText)
-                                    .frame(height: barH * (Double(bar.warn) / Double(max(bar.total, 1))))
-                            }
-                            Spacer(minLength: 0)
-                        }
-                        .frame(height: barH, alignment: .bottom)
+                            .fill(theme.badgeText(for: .error))
+                            .frame(height: errorHeight)
+                        Rectangle()
+                            .fill(theme.badgeText(for: .warning))
+                            .frame(height: warningHeight)
+                        Rectangle()
+                            .fill(theme.badgeText(for: .info))
+                            .frame(height: infoHeight)
                     }
+                    .frame(height: barH, alignment: .bottom)
                 }
             }
         }
@@ -155,13 +259,44 @@ struct HistogramView: View {
 
     private func tooltipText(for bucketIndex: Int, histogram: LogHistogram) -> String {
         let range = histogram.timeRange(forBucket: bucketIndex)
-        let timeLabel = Self.tooltipTimeFormatter.string(from: range.start)
+        let startLabel = Self.tooltipTimeFormatter.string(from: range.start)
+        let endLabel = Self.tooltipTimeFormatter.string(from: range.end)
         let count = histogram.bars[bucketIndex].total
         let countLabel = count == 1 ? "1 event" : "\(count) events"
-        return "\(timeLabel) — \(countLabel)"
+        return "\(startLabel) – \(endLabel)\n\(countLabel)"
+    }
+
+    private func hoveredSlotLabel(bins: LogHistogram) -> String? {
+        guard let hoveredBucket, bins.bars.indices.contains(hoveredBucket) else { return nil }
+        let range = bins.timeRange(forBucket: hoveredBucket)
+        let start = Self.slotTimeFormatter.string(from: range.start)
+        let end = Self.slotTimeFormatter.string(from: range.end)
+        return "\(start) – \(end)"
+    }
+
+    private func selectedRangeLabel(bins: LogHistogram) -> String? {
+        guard let selectionStartX, let selectionEndX,
+              abs(selectionEndX - selectionStartX) >= 8 else { return nil }
+        let duration = bins.bucketSize * Double(bins.bars.count)
+        let startFraction = Double(min(selectionStartX, selectionEndX) / selectionChartWidth)
+        let endFraction = Double(max(selectionStartX, selectionEndX) / selectionChartWidth)
+        let start = bins.startTime.addingTimeInterval(duration * startFraction)
+        let end = bins.startTime.addingTimeInterval(duration * endFraction)
+        return "\(Self.slotTimeFormatter.string(from: start)) – \(Self.slotTimeFormatter.string(from: end))"
+    }
+
+    private func boundedX(_ value: CGFloat, width: CGFloat) -> CGFloat {
+        min(max(value, 0), width)
     }
 
     private static let tooltipTimeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "MMM d, yyyy HH:mm:ss"
+        return f
+    }()
+
+    private static let slotTimeFormatter: DateFormatter = {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
         f.dateFormat = "HH:mm:ss"

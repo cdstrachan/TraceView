@@ -14,6 +14,8 @@ struct LogDocumentView: View {
     // display once shown (so it's actually perceptible when it does appear).
     @State private var showSpinner: Bool = false
     @State private var spinnerShownAt: Date?
+    @State private var histogramBarHeight = CGFloat(SettingsManager.defaultHistogramHeight)
+    @State private var histogramDragStartHeight: CGFloat?
     let pane: Pane
 
     init(document: LogDocument, pane: Pane = .primary) {
@@ -30,9 +32,7 @@ struct LogDocumentView: View {
             SeveritySummaryBar(document: document, viewModel: viewModel)
 
             // Event density histogram (hidden if timestamps unavailable)
-            HistogramView(document: document, onBucketClick: { bucketIndex in
-                jumpToBucket(bucketIndex)
-            })
+            histogramSection
 
             // Filter bar — zIndex so the mode-toggle's HoverTooltip (which
             // extends past the bar's bottom edge into the table area) draws
@@ -92,8 +92,12 @@ struct LogDocumentView: View {
             StatusBarView(document: document, viewModel: viewModel)
         }
         .onAppear {
+            histogramBarHeight = CGFloat(settingsManager.histogramHeight)
             viewModel.findMode = settingsManager.defaultFindMode
             viewModel.load()
+        }
+        .onChange(of: settingsManager.histogramHeight) { _, newHeight in
+            histogramBarHeight = CGFloat(newHeight)
         }
         .task(id: document.isLoading) {
             // Spinner debounce. .task(id:) auto-cancels and restarts on each
@@ -161,6 +165,52 @@ struct LogDocumentView: View {
             )
             .environmentObject(themeManager)
         }
+    }
+
+    private var histogramSection: some View {
+        VStack(spacing: 0) {
+            HistogramView(
+                document: document,
+                onBucketClick: { bucketIndex in
+                    jumpToBucket(bucketIndex)
+                },
+                barHeight: histogramBarHeight,
+                zoomDepth: document.histogramZoomDepth,
+                onZoom: { range in document.zoomHistogram(to: range) },
+                onZoomOut: { document.zoomOutHistogram() },
+                onZoomAll: { document.resetHistogramZoom() }
+            )
+            if document.histogram != nil {
+                HistogramResizeHandle(
+                    onDragStart: {
+                        histogramDragStartHeight = histogramBarHeight
+                    },
+                    onDrag: resizeHistogram(by:),
+                    onDragEnd: {
+                        settingsManager.histogramHeight = Double(histogramBarHeight)
+                        histogramDragStartHeight = nil
+                    }
+                )
+                .frame(height: 6)
+                .overlay {
+                    Capsule()
+                        .fill(themeManager.current.borderSubtle)
+                        .frame(width: 32, height: 2)
+                }
+                .hoverTooltip("Drag to resize histogram", edge: .top)
+            }
+        }
+    }
+
+    private func resizeHistogram(by delta: CGFloat) {
+        guard let startHeight = histogramDragStartHeight else { return }
+        histogramBarHeight = min(
+            max(
+                startHeight + delta,
+                CGFloat(SettingsManager.minimumHistogramHeight)
+            ),
+            CGFloat(SettingsManager.maximumHistogramHeight)
+        )
     }
 
     /// The log renderer. Phase 2 cutover left only LogScrollView; the
