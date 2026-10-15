@@ -25,6 +25,9 @@ struct HistogramView: View {
     @State private var selectionEndX: CGFloat?
     @State private var selectionChartWidth: CGFloat = 1
     @State private var scrollMonitor = HistogramScrollWheelMonitor()
+    @State private var tooltipVisible = false
+    @State private var tooltipTask: Task<Void, Never>?
+    @State private var tooltipSize: CGSize = .zero
 
     var body: some View {
         let theme = themeManager.current
@@ -39,6 +42,10 @@ struct HistogramView: View {
             .background(theme.filterBarBackground)
             .overlay(alignment: .bottom) {
                 Rectangle().fill(theme.borderSubtle).frame(height: 1)
+            }
+            .overlay { bucketTooltip(bins: bins) }
+            .onChange(of: hoveredBucket) { _, bucket in
+                updateTooltipVisibility(for: bucket)
             }
         }
     }
@@ -167,11 +174,61 @@ struct HistogramView: View {
                 hoveredBucket = nil
             }
         }
-        .hoverTooltip(
-            tooltipText(for: i, histogram: bins),
-            edge: .top,
-            delay: .milliseconds(150)
-        )
+    }
+
+    /// Single tooltip for the hovered bucket, drawn below the histogram
+    /// (not above — the strip sits near the top of the window, so an
+    /// upward tooltip gets clipped) and clamped horizontally inside the pane.
+    @ViewBuilder
+    private func bucketTooltip(bins: LogHistogram) -> some View {
+        GeometryReader { geometry in
+            if tooltipVisible, selectionStartX == nil,
+               let i = hoveredBucket, bins.bars.indices.contains(i) {
+                let chartWidth = max(geometry.size.width - 28, 1)
+                let barCenterX = 14 + (CGFloat(i) + 0.5) * chartWidth / CGFloat(bins.bars.count)
+                let halfWidth = tooltipSize.width / 2
+                let x = max(halfWidth + 4, min(barCenterX, geometry.size.width - halfWidth - 4))
+
+                Text(tooltipText(for: i, histogram: bins))
+                    .font(.system(size: 11))
+                    .foregroundStyle(.primary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background {
+                        RoundedRectangle(cornerRadius: 5)
+                            .fill(.regularMaterial)
+                            .shadow(color: .black.opacity(0.18), radius: 4, y: 2)
+                    }
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 5)
+                            .strokeBorder(.separator, lineWidth: 0.5)
+                    }
+                    .fixedSize()
+                    .background {
+                        GeometryReader { proxy in
+                            Color.clear.preference(key: HistogramTooltipSizeKey.self, value: proxy.size)
+                        }
+                    }
+                    .position(x: x, y: geometry.size.height + 4 + tooltipSize.height / 2)
+            }
+        }
+        .allowsHitTesting(false)
+        .onPreferenceChange(HistogramTooltipSizeKey.self) { tooltipSize = $0 }
+    }
+
+    private func updateTooltipVisibility(for bucket: Int?) {
+        tooltipTask?.cancel()
+        guard bucket != nil else {
+            tooltipVisible = false
+            return
+        }
+        // Once shown, the tooltip follows the pointer bar-to-bar immediately.
+        guard !tooltipVisible else { return }
+        tooltipTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(150))
+            guard !Task.isCancelled else { return }
+            tooltipVisible = true
+        }
     }
 
     @ViewBuilder
@@ -377,4 +434,11 @@ final class HistogramScrollWheelMonitor {
     }
 
     deinit { stop() }
+}
+
+private struct HistogramTooltipSizeKey: PreferenceKey {
+    static var defaultValue: CGSize = .zero
+    static func reduce(value: inout CGSize, nextValue: () -> CGSize) {
+        value = nextValue()
+    }
 }

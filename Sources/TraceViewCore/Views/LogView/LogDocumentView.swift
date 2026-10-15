@@ -32,8 +32,10 @@ struct LogDocumentView: View {
             SeveritySummaryBar(document: document, viewModel: viewModel)
 
             // Event density histogram (hidden if timestamps unavailable)
+            // Draw above the filter bar (zIndex 1) and table so the bucket
+            // tooltip, which hangs below the histogram, isn't covered.
             histogramSection
-
+                .zIndex(2)
             // Filter bar — zIndex so the mode-toggle's HoverTooltip (which
             // extends past the bar's bottom edge into the table area) draws
             // above the AppKit-backed NSLogTableView's column headers.
