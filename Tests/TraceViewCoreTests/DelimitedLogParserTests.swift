@@ -45,6 +45,31 @@ final class DelimitedLogParserTests: XCTestCase {
         }
     }
 
+    func testHeaderRowNamesBecomeGridColumnTitles() throws {
+        let lines = ["event_time;sev;svc;details", "2026-10-15 12:00:00;error;api;Boom"]
+        let parser = CSVLogParser(delimiter: ";", sampleLines: lines, headerMode: .headers)
+        XCTAssertEqual(parser.columnTitles, [
+            .timestamp: "event_time", .level: "sev", .field(2): "svc", .message: "details"
+        ])
+        let headerless = CSVLogParser(delimiter: ";", sampleLines: lines, headerMode: .noHeaders)
+        XCTAssertTrue(headerless.columnTitles.isEmpty)
+    }
+
+    func testUnmappedFieldsBecomeExtraGridColumns() throws {
+        let lines = [
+            "time,level,host,user,message",
+            "2026-10-15 12:00:00,INFO,web-1,alice,Started",
+        ]
+        let parser = CSVLogParser(delimiter: ",", sampleLines: lines)
+        XCTAssertEqual(parser.extraFieldColumns, [2, 3])
+        XCTAssertEqual(parser.gridColumns, [.timestamp, .level, .field(2), .field(3), .message])
+        XCTAssertEqual(parser.columnTitles[.field(2)], "host")
+        XCTAssertEqual(parser.columnTitles[.field(3)], "user")
+        XCTAssertEqual(parser.fieldValues(for: lines[1])[3], "alice")
+        XCTAssertEqual(parser.fieldTitle(0), "time")
+        XCTAssertEqual(CSVLogParser(delimiter: ",", sampleLines: lines, headerMode: .noHeaders).fieldTitle(0), "Column 1")
+    }
+
     func testAutomaticSeparatorsAndNamedColumns() throws {
         for separator in DelimitedLogOptions.automaticDelimiters {
             let lines = [

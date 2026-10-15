@@ -10,6 +10,8 @@ struct CSVLogParser: LogParser {
     let delimiter: Character
     let headers: [String]?
     let headerLineNumber: Int?
+    /// Number of fields in the sampled rows; 0 when built without samples.
+    let fieldCount: Int
     private let timestampColumn: Int?
     private let levelColumn: Int?
     private let messageColumn: Int?
@@ -26,6 +28,7 @@ struct CSVLogParser: LogParser {
         guard let sampleLines else {
             headers = nil
             headerLineNumber = headerMode == .noHeaders ? nil : 1
+            fieldCount = 0
             timestampColumn = nil
             levelColumn = nil
             messageColumn = nil
@@ -36,6 +39,7 @@ struct CSVLogParser: LogParser {
         let nonEmpty = sampleLines.enumerated().filter { !$0.element.isEmpty }
         let rows = nonEmpty.map { Self.splitRow($0.element, delimiter: delimiter) }
         let first = rows.first ?? []
+        fieldCount = rows.map(\.count).max() ?? 0
         let known = Self.timestampHeaders.union(Self.levelHeaders)
             .union(Self.messageHeaders).union(Self.componentHeaders).union(Self.threadHeaders)
         let normalized = first.map { $0.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -68,6 +72,58 @@ struct CSVLogParser: LogParser {
         }
         componentColumn = named(Self.componentHeaders)
         threadColumn = named(Self.threadHeaders)
+    }
+
+    /// Fields not mapped to the Timestamp, Level or Message columns.
+    var extraFieldColumns: [Int] {
+        let shown = Set([timestampColumn, levelColumn, messageColumn].compactMap { $0 })
+        return (0..<fieldCount).filter { !shown.contains($0) }
+    }
+
+    /// Every field in file order, as grid columns. Timestamp, level and
+    /// message keep their typed columns (date formatting, level badge,
+    /// highlighting); everything else is shown verbatim.
+    var gridColumns: [ColumnID] {
+        (0..<fieldCount).map { column in
+            switch column {
+            case timestampColumn: return .timestamp
+            case levelColumn: return .level
+            case messageColumn: return .message
+            default: return .field(column)
+            }
+        }
+    }
+
+    func fieldValues(for line: String) -> [String] {
+        parseCSVRow(line)
+    }
+
+    /// Header name for a field, or "Column N" when there's no header.
+    func fieldTitle(_ column: Int) -> String {
+        if let headers, column < headers.count {
+            let name = headers[column].trimmingCharacters(in: .whitespacesAndNewlines)
+            if !name.isEmpty { return name }
+        }
+        return "Column \(column + 1)"
+    }
+
+    /// Grid column titles taken from the header row. Extra fields fall
+    /// back to "Column N" when the file has no header row.
+    var columnTitles: [ColumnID: String] {
+        var titles: [ColumnID: String] = [:]
+        func name(_ column: Int) -> String? {
+            guard let headers, column < headers.count else { return nil }
+            let name = headers[column].trimmingCharacters(in: .whitespacesAndNewlines)
+            return name.isEmpty ? nil : name
+        }
+        for (id, column) in [(ColumnID.timestamp, timestampColumn), (.level, levelColumn),
+                             (.message, messageColumn)] {
+            if let column, let name = name(column) { titles[id] = name }
+        }
+        for column in extraFieldColumns {
+            if let name = name(column) { titles[.field(column)] = name }
+        }
+        return titles
     }
 
     private static let timestampHeaders = Set(["timestamp", "time", "datetime", "date", "ts", "@timestamp"])

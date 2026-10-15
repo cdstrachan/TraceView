@@ -26,8 +26,13 @@ struct DetailPaneView: View {
                     metadataItem(label: "Time", value: Formatters.formatDateTime(ts), theme: theme)
                 }
 
-                // Component
-                if let comp = entry.component {
+                // Component — delimited files show their first column
+                // (header name or "Column 1") instead of a guessed component.
+                if let csvParser {
+                    if let first = csvParser.fieldValues(for: entry.rawLine).first {
+                        metadataItem(label: csvParser.fieldTitle(0), value: first, theme: theme)
+                    }
+                } else if let comp = entry.component {
                     metadataItem(label: "Component", value: comp, theme: theme)
                 }
 

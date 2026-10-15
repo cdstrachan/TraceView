@@ -3,6 +3,7 @@ import SwiftUI
 struct StatusBarView: View {
     @ObservedObject var document: LogDocument
     @ObservedObject var viewModel: LogDocumentViewModel
+    let pane: Pane
     @EnvironmentObject var themeManager: ThemeManager
     @EnvironmentObject var appState: AppState
 
@@ -97,9 +98,24 @@ struct StatusBarView: View {
             }
 
             // Following / Not following / Paused / Stalled + rolling rate
-            statusItem(theme: theme) {
-                streamHealth(theme: theme)
+            Button {
+                appState.activePane = pane
+                appState.toggleFollowing(in: pane)
+            } label: {
+                statusItem(theme: theme) {
+                    streamHealth(theme: theme)
+                }
+                .frame(height: 28)
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .disabled(document.isIngestionPaused)
+            .help(document.isIngestionPaused
+                  ? "Resume the live stream before changing following."
+                  : document.isFollowing
+                  ? "Stop automatically scrolling to new lines."
+                  : "Jump to the bottom and follow new lines.")
+            .accessibilityLabel(document.isFollowing ? "Stop following" : "Start following")
         }
         .font(.system(size: 11))
         .foregroundStyle(theme.secondaryText)

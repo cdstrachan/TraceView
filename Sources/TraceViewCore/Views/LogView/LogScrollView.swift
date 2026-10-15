@@ -39,6 +39,10 @@ struct LogScrollView: NSViewRepresentable {
     var showSource: Bool = false
     var sourceNameForID: (UUID) -> String? = { _ in nil }
     var onOpenInSourceLog: (LogEntry) -> Void = { _ in }
+    var columnTitles: [ColumnID: String] = [:]
+    /// Delimited logs: the file's columns in file order, plus the row splitter.
+    var fileColumns: [ColumnID]? = nil
+    var fieldValues: ((LogEntry) -> [String])? = nil
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -103,11 +107,11 @@ struct LogScrollView: NSViewRepresentable {
         // so saved state round-trips between the two renderers.
         let savedWidths: [ColumnID: CGFloat] = ColumnLayoutStore.loadWidths()
             .reduce(into: [:]) { acc, kv in
-                guard let id = ColumnID(rawValue: kv.key) else { return }
+                guard let id = ColumnID(rawValue: kv.key), !id.isField else { return }
                 acc[id] = CGFloat(kv.value)
             }
         let savedOrder: [ColumnID]? = ColumnLayoutStore.loadOrder().flatMap { raw in
-            let parsed = raw.compactMap { ColumnID(rawValue: $0) }
+            let parsed = raw.compactMap { ColumnID(rawValue: $0) }.filter { !$0.isField }
             return parsed.isEmpty ? nil : parsed
         }
         container.userWidths = savedWidths
@@ -117,11 +121,14 @@ struct LogScrollView: NSViewRepresentable {
         // route through the container (which already updates its own
         // state) and into ColumnLayoutStore. Mirrors NSLogTableView's
         // columnDidResize/columnDidMove notification handlers.
+        // Delimited-field columns differ per file, so they stay out of the
+        // app-wide saved layout.
         container.onColumnResized = { id, width in
+            guard !id.isField else { return }
             ColumnLayoutStore.saveWidth(Double(width), for: id.rawValue)
         }
         container.onColumnsReordered = { order in
-            ColumnLayoutStore.saveOrder(order.map(\.rawValue))
+            ColumnLayoutStore.saveOrder(order.filter { !$0.isField }.map(\.rawValue))
         }
 
         context.coordinator.container = container
@@ -155,10 +162,12 @@ struct LogScrollView: NSViewRepresentable {
             showLineNumber: showLineNumbers,
             showTimestamp: showTimestamp,
             showComponent: showComponent,
-            showSource: showSource
+            showSource: showSource,
+            fileColumns: fileColumns
         )
 
         container.documentView.onScrollUp = onScrollUp
+        container.headerView.columnTitles = columnTitles
         container.applyState(
             entries: entries,
             theme: theme,
@@ -171,7 +180,8 @@ struct LogScrollView: NSViewRepresentable {
             inlineExpansionEnabled: inlineExpansionEnabled,
             sourceNameForID: sourceNameForID,
             horizontalMessageScroll: horizontalMessageScroll,
-            colorLogRowsByLevel: themeManager.colorLogRowsByLevel
+            colorLogRowsByLevel: themeManager.colorLogRowsByLevel,
+            fieldValues: fieldValues
         )
 
         // Go-to-line: if a pending line number is set, scroll + select
@@ -511,6 +521,12 @@ final class LogScrollContainerView: NSView {
     /// scroller, the message-column width, and the document frame width.
     private(set) var horizontalMessageScroll = false
 
+    /// Delimited files can have more columns than fit, so they also get a
+    /// horizontal scroller.
+    private var allowsHorizontalScroll: Bool {
+        horizontalMessageScroll || visibility.fileColumns != nil
+    }
+
     // MARK: - Persistence callbacks
 
     var onColumnResized: (ColumnID, CGFloat) -> Void = { _, _ in }
@@ -576,21 +592,23 @@ final class LogScrollContainerView: NSView {
         inlineExpansionEnabled: Bool,
         sourceNameForID: @escaping (UUID) -> String?,
         horizontalMessageScroll: Bool,
-        colorLogRowsByLevel: Bool
+        colorLogRowsByLevel: Bool,
+        fieldValues: ((LogEntry) -> [String])? = nil
     ) {
-        let wasHorizontalMessageScroll = self.horizontalMessageScroll
+        let wasHorizontallyScrollable = allowsHorizontalScroll
         self.visibility = visibility
+        headerView.isFileOrderLayout = visibility.fileColumns != nil
         self.horizontalMessageScroll = horizontalMessageScroll
         // Enabling the scroller lets AppKit show the horizontal bar when the
         // document outgrows the clip; autohide keeps it invisible otherwise.
-        scrollView.hasHorizontalScroller = horizontalMessageScroll
+        scrollView.hasHorizontalScroller = allowsHorizontalScroll
 
-        // Leaving no-wrap mode: the document is about to shrink back to the
+        // Leaving horizontal scrolling: the document is about to shrink back to the
         // clip width and the scroller disappears. Snap the horizontal scroll
         // back to the left explicitly so a previously scrolled-right view
         // (and the header offset that tracks it) can't be left stranded
         // shifted with no scroller to correct it.
-        if wasHorizontalMessageScroll && !horizontalMessageScroll {
+        if wasHorizontallyScrollable && !allowsHorizontalScroll {
             let clip = scrollView.contentView
             clip.scroll(to: NSPoint(x: 0, y: clip.bounds.origin.y))
             scrollView.reflectScrolledClipView(clip)
@@ -607,7 +625,8 @@ final class LogScrollContainerView: NSView {
             inlineExpansionEnabled: inlineExpansionEnabled,
             sourceNameForID: sourceNameForID,
             horizontalScrollEnabled: horizontalMessageScroll,
-            colorLogRowsByLevel: colorLogRowsByLevel
+            colorLogRowsByLevel: colorLogRowsByLevel,
+            fieldValues: fieldValues
         )
         syncLayout()
     }
@@ -641,7 +660,7 @@ final class LogScrollContainerView: NSView {
         // Document width: the clip width normally, or the full column extent
         // when no-wrap mode pushes the message column past the viewport.
         let totalWidth = columns.last.map { $0.x + $0.width } ?? clipWidth
-        let docWidth = horizontalMessageScroll ? max(clipWidth, totalWidth) : clipWidth
+        let docWidth = allowsHorizontalScroll ? max(clipWidth, totalWidth) : clipWidth
         if documentView.frame.size.width != docWidth {
             documentView.setFrameSize(NSSize(
                 width: docWidth,

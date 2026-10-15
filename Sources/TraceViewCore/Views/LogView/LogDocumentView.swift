@@ -101,7 +101,7 @@ struct LogDocumentView: View {
             Divider().background(theme.border)
 
             // Status bar
-            StatusBarView(document: document, viewModel: viewModel)
+            StatusBarView(document: document, viewModel: viewModel, pane: pane)
         }
         .onAppear {
             histogramBarHeight = CGFloat(settingsManager.histogramHeight)
@@ -335,6 +335,11 @@ struct LogDocumentView: View {
                 guard let id = entry.sourceDocumentID,
                       let line = entry.sourceLineNumber else { return }
                 appState.openInSourceLog(documentID: id, lineNumber: line)
+            },
+            columnTitles: document.delimitedParser?.columnTitles ?? [:],
+            fileColumns: document.isMerged ? nil : document.delimitedParser.map(\.gridColumns).flatMap { $0.isEmpty ? nil : $0 },
+            fieldValues: document.isMerged ? nil : document.delimitedParser.map { parser in
+                { entry in parser.fieldValues(for: entry.rawLine) }
             }
         )
     }

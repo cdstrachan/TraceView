@@ -4,19 +4,27 @@ import CoreGraphics
 /// Identifies a column in the custom log view. Raw values match the
 /// identifiers used by NSLogTableView so saved widths and order from
 /// `ColumnLayoutStore` round-trip across the two renderers during the
-/// feature-flag period.
-enum ColumnID: String, CaseIterable {
+/// feature-flag period. `field(n)` is the zero-based nth field of a
+/// delimited log that isn't already shown by a built-in column.
+enum ColumnID: Hashable {
     case lineNumber
     case timestamp
     case level
     case component
     case sourceLabel
     case message
+    case field(Int)
+
+    var isField: Bool {
+        if case .field = self { return true }
+        return false
+    }
 
     /// Initial width when no saved width is present. Mirrors the
     /// NSTableColumn defaults at NSLogTableView.swift:96-138.
     var defaultWidth: CGFloat {
         switch self {
+        case .field:       return 120
         case .lineNumber:  return 48
         case .timestamp:   return 110
         case .level:       return 52
@@ -28,6 +36,7 @@ enum ColumnID: String, CaseIterable {
 
     var minWidth: CGFloat {
         switch self {
+        case .field:       return 50
         case .lineNumber:  return 48
         case .timestamp:   return 80
         case .level:       return 40
@@ -41,6 +50,7 @@ enum ColumnID: String, CaseIterable {
     /// a hard upper bound so a stray drag can't swallow the message column.
     var maxWidth: CGFloat? {
         switch self {
+        case .field:       return 600
         case .lineNumber:  return 80
         case .timestamp:   return 280
         case .level:       return 80
@@ -56,12 +66,45 @@ enum ColumnID: String, CaseIterable {
     /// which renderer is active.
     var title: String {
         switch self {
+        case .field(let index): return "Column \(index + 1)"
         case .lineNumber:  return "#"
         case .timestamp:   return "Timestamp"
         case .level:       return "Level"
         case .component:   return "Component"
         case .sourceLabel: return "Source"
         case .message:     return "Message"
+        }
+    }
+}
+
+extension ColumnID: RawRepresentable {
+    private static let fieldPrefix = "field."
+
+    init?(rawValue: String) {
+        switch rawValue {
+        case "lineNumber":  self = .lineNumber
+        case "timestamp":   self = .timestamp
+        case "level":       self = .level
+        case "component":   self = .component
+        case "sourceLabel": self = .sourceLabel
+        case "message":     self = .message
+        default:
+            guard rawValue.hasPrefix(Self.fieldPrefix),
+                  let index = Int(rawValue.dropFirst(Self.fieldPrefix.count)),
+                  index >= 0 else { return nil }
+            self = .field(index)
+        }
+    }
+
+    var rawValue: String {
+        switch self {
+        case .lineNumber:  return "lineNumber"
+        case .timestamp:   return "timestamp"
+        case .level:       return "level"
+        case .component:   return "component"
+        case .sourceLabel: return "sourceLabel"
+        case .message:     return "message"
+        case .field(let index): return "\(Self.fieldPrefix)\(index)"
         }
     }
 }
@@ -78,14 +121,24 @@ struct ColumnFrame: Equatable {
 /// always visible, so they don't appear as toggleable fields here. The
 /// three user toggles (line number, timestamp, component) and the
 /// document-driven source column are the only configurable ones.
+///
+/// `fileColumns`, when set (delimited logs), replaces the built-in column
+/// set: the grid shows exactly the file's fields in file order, after the
+/// optional line-number column.
 struct ColumnVisibility: Equatable {
     var showLineNumber: Bool
     var showTimestamp: Bool
     var showComponent: Bool
     var showSource: Bool
+    var fileColumns: [ColumnID]? = nil
 
     func isVisible(_ id: ColumnID) -> Bool {
+        if let fileColumns, id != .lineNumber {
+            guard fileColumns.contains(id) else { return false }
+            return id == .timestamp ? showTimestamp : true
+        }
         switch id {
+        case .field:       return false
         case .lineNumber:  return showLineNumber
         case .timestamp:   return showTimestamp
         case .level:       return true
@@ -131,19 +184,37 @@ enum LogScrollColumnLayout {
         order: [ColumnID]? = nil,
         messageContentWidth: CGFloat? = nil
     ) -> [ColumnFrame] {
-        let resolvedOrder = resolve(order: order)
+        let resolvedOrder = visibility.fileColumns.map { [.lineNumber] + $0 }
+            ?? resolve(order: order)
         let visibleIDs = resolvedOrder.filter { visibility.isVisible($0) }
 
+        func clampedWidth(_ id: ColumnID, _ raw: CGFloat) -> CGFloat {
+            if let maxW = id.maxWidth { return max(id.minWidth, min(maxW, raw)) }
+            return max(id.minWidth, raw)
+        }
+
         var widths: [ColumnID: CGFloat] = [:]
+        if visibility.fileColumns != nil {
+            // File-order layout: Message may sit mid-row, so every column
+            // (Message included) has its own resizable width and the last
+            // column stretches to fill any spare room.
+            for id in visibleIDs {
+                var raw = savedWidths[id] ?? id.defaultWidth
+                if id == .message, savedWidths[id] == nil {
+                    raw = max(Self.fileMessageWidth, messageContentWidth ?? 0)
+                }
+                widths[id] = clampedWidth(id, raw)
+            }
+            if let last = visibleIDs.last {
+                let others = visibleIDs.dropLast().reduce(CGFloat(0)) { $0 + (widths[$1] ?? 0) }
+                widths[last] = max(widths[last] ?? 0, boundsWidth - others)
+            }
+            return frames(for: visibleIDs, widths: widths)
+        }
+
         var nonMessageTotal: CGFloat = 0
         for id in visibleIDs where id != .message {
-            let raw = savedWidths[id] ?? id.defaultWidth
-            let clamped: CGFloat
-            if let maxW = id.maxWidth {
-                clamped = max(id.minWidth, min(maxW, raw))
-            } else {
-                clamped = max(id.minWidth, raw)
-            }
+            let clamped = clampedWidth(id, savedWidths[id] ?? id.defaultWidth)
             widths[id] = clamped
             nonMessageTotal += clamped
         }
@@ -157,9 +228,16 @@ enum LogScrollColumnLayout {
             widths[.message] = messageWidth
         }
 
+        return frames(for: visibleIDs, widths: widths)
+    }
+
+    /// Starting width for Message when it isn't the autofill column.
+    static let fileMessageWidth: CGFloat = 400
+
+    private static func frames(for ids: [ColumnID], widths: [ColumnID: CGFloat]) -> [ColumnFrame] {
         var frames: [ColumnFrame] = []
         var x: CGFloat = 0
-        for id in visibleIDs {
+        for id in ids {
             let w = widths[id] ?? 0
             frames.append(ColumnFrame(id: id, x: x, width: w))
             x += w
@@ -180,10 +258,9 @@ enum LogScrollColumnLayout {
     /// the right edge.
     private static func resolve(order: [ColumnID]?) -> [ColumnID] {
         let baseOrder = order ?? defaultOrder
-        var withoutMessage = baseOrder.filter { $0 != .message }
+        var withoutMessage = baseOrder.filter { $0 != .message && !$0.isField }
         let seen = Set(withoutMessage)
-        let missing = defaultOrder.filter { !seen.contains($0) && $0 != .message }
-        withoutMessage.append(contentsOf: missing)
+        withoutMessage.append(contentsOf: defaultOrder.filter { !seen.contains($0) && $0 != .message })
         withoutMessage.append(.message)
         return withoutMessage
     }

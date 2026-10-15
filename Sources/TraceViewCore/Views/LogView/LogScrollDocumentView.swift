@@ -69,6 +69,9 @@ final class LogScrollDocumentView: NSView {
     /// click lands on the resize cursor or the column body.
     private(set) var columns: [ColumnFrame] = []
     private var sourceNameForID: (UUID) -> String? = { _ in nil }
+    /// Splits a row into delimited fields for `.field` columns; nil when
+    /// the document isn't a delimited log.
+    private(set) var fieldValues: ((LogEntry) -> [String])?
 
     /// No-wrap horizontal-scroll mode. When true the message column is
     /// widened to fit its content (`messageContentWidth`) so long lines can
@@ -310,9 +313,11 @@ final class LogScrollDocumentView: NSView {
         inlineExpansionEnabled: Bool,
         sourceNameForID: @escaping (UUID) -> String?,
         horizontalScrollEnabled: Bool,
-        colorLogRowsByLevel: Bool
+        colorLogRowsByLevel: Bool,
+        fieldValues: ((LogEntry) -> [String])? = nil
     ) {
         self.isFollowing = isFollowing
+        self.fieldValues = fieldValues
         let oldCount = self.entries.count
         let oldLastLine = previousLastEntryLine
         let oldExpandedRow = expandedRow
@@ -1048,8 +1053,16 @@ final class LogScrollDocumentView: NSView {
             // Per-column text. Vertically centered via a band rect sized
             // to the column's font line-height; ellipsis truncation via
             // NSAttributedString.draw(with:options:) + paragraph style.
+            var fields: [String]?
             for column in layout {
-                let value = stringValue(for: column.id, entry: entry)
+                let value: String
+                if case .field(let index) = column.id {
+                    let rowFields = fields ?? fieldValues?(entry) ?? []
+                    fields = rowFields
+                    value = index < rowFields.count ? rowFields[index] : ""
+                } else {
+                    value = stringValue(for: column.id, entry: entry)
+                }
                 let (columnAttrs, lineHeight) = attributes(
                     for: column.id,
                     level: entry.level,
@@ -1083,7 +1096,7 @@ final class LogScrollDocumentView: NSView {
             return (cache.timestamp, cache.bodyLineHeight)
         case .level:
             return (cache.levelBadge[level] ?? cache.component, cache.badgeLineHeight)
-        case .component:
+        case .component, .field:
             return (cache.component, cache.bodyLineHeight)
         case .sourceLabel:
             return (cache.sourceLabel, cache.smallLineHeight)
@@ -1109,6 +1122,9 @@ final class LogScrollDocumentView: NSView {
             return "—"
         case .message:
             return entry.gridMessage
+        case .field(let index):
+            let fields = fieldValues?(entry) ?? []
+            return index < fields.count ? fields[index] : ""
         }
     }
 }

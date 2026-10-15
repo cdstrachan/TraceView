@@ -92,6 +92,40 @@ final class LogScrollColumnLayoutTests: XCTestCase {
         XCTAssertEqual(frames[sourceIdx + 1].id, .message)
     }
 
+    // MARK: - Delimited field columns
+
+    func testFileColumnsKeepFileOrderWithoutComponent() {
+        var visibility = allConfigurableVisible
+        visibility.fileColumns = [.field(0), .timestamp, .message, .level, .field(4)]
+
+        let frames = LogScrollColumnLayout.compute(
+            boundsWidth: 1400,
+            visibility: visibility,
+            order: [.component, .level, .timestamp, .lineNumber, .message]
+        )
+
+        XCTAssertEqual(frames.map(\.id), [
+            .lineNumber, .field(0), .timestamp, .message, .level, .field(4)
+        ])
+        XCTAssertEqual(ColumnID(rawValue: ColumnID.field(3).rawValue), .field(3))
+    }
+
+    func testFileLayoutMessageUsesSavedWidthAndLastColumnFills() {
+        var visibility = allConfigurableVisible
+        visibility.showLineNumber = false
+        visibility.fileColumns = [.timestamp, .message, .field(2)]
+
+        let frames = LogScrollColumnLayout.compute(
+            boundsWidth: 1000,
+            visibility: visibility,
+            savedWidths: [.message: 300]
+        )
+
+        XCTAssertEqual(frames.map(\.id), [.timestamp, .message, .field(2)])
+        XCTAssertEqual(frames[1].width, 300)
+        XCTAssertEqual(frames[2].width, 1000 - ColumnID.timestamp.defaultWidth - 300, accuracy: 0.5)
+    }
+
     // MARK: - Min/max clamping
 
     func testSavedWidthBelowMinIsClampedUp() {

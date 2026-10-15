@@ -27,6 +27,18 @@ final class LogScrollHeaderView: NSView {
     private(set) var theme: (any AppTheme)?
     private(set) var fontSize: Double = 12.0
 
+    /// Per-document title overrides (e.g. names from a CSV header row).
+    /// Columns without an override use `ColumnID.title`.
+    var columnTitles: [ColumnID: String] = [:] {
+        didSet {
+            if oldValue != columnTitles { needsDisplay = true }
+        }
+    }
+
+    func title(for id: ColumnID) -> String {
+        columnTitles[id] ?? id.title
+    }
+
     /// Horizontal scroll offset of the body, in content coordinates. The
     /// header is a sibling of the scroll view (pinned, never scrolled), so
     /// in no-wrap horizontal-scroll mode it must offset its own content to
@@ -72,6 +84,14 @@ final class LogScrollHeaderView: NSView {
     /// into `userOrder` and persists via ColumnLayoutStore.
     var onReorderCommit: ([ColumnID]) -> Void = { _ in }
 
+    /// Delimited logs: columns follow file order (no drag-reorder) and
+    /// every column, Message included, has a resize divider.
+    var isFileOrderLayout = false
+
+    private func isResizable(_ column: ColumnFrame) -> Bool {
+        isFileOrderLayout || column.id != .message
+    }
+
     // MARK: - Init
 
     override init(frame frameRect: NSRect) {
@@ -99,7 +119,7 @@ final class LogScrollHeaderView: NSView {
         // One resize-left-right cursor rect per non-message column,
         // centered on its right edge. AppKit handles cursor switching
         // automatically as the mouse moves over these rects.
-        for column in columns where column.id != .message {
+        for column in columns where isResizable(column) {
             let dividerX = column.x + column.width - contentOffsetX
             let rect = NSRect(
                 x: dividerX - Self.dividerHitRadius,
@@ -117,7 +137,7 @@ final class LogScrollHeaderView: NSView {
     /// of `x`. The message column is excluded — its right edge is the
     /// view's trailing edge and isn't resizable.
     private func dividerHit(at x: CGFloat) -> (column: ColumnID, dividerX: CGFloat)? {
-        for column in columns where column.id != .message {
+        for column in columns where isResizable(column) {
             let dividerX = column.x + column.width
             if abs(x - dividerX) <= Self.dividerHitRadius {
                 return (column.id, dividerX)
@@ -155,7 +175,7 @@ final class LogScrollHeaderView: NSView {
             return
         }
 
-        if let column = columnHit(at: x), column.id != .message {
+        if !isFileOrderLayout, let column = columnHit(at: x), column.id != .message {
             // Arm potential reorder. The actual drag only begins once
             // mouseDragged crosses the threshold — that gates against
             // accidental reorders from a click that drifted a pixel.
@@ -270,7 +290,7 @@ final class LogScrollHeaderView: NSView {
                 width: max(0, column.width - 8),
                 height: lineHeight
             )
-            NSAttributedString(string: column.id.title, attributes: attrs)
+            NSAttributedString(string: title(for: column.id), attributes: attrs)
                 .draw(with: textRect, options: [.usesLineFragmentOrigin], context: nil)
         }
 
@@ -343,7 +363,7 @@ final class LogScrollHeaderView: NSView {
             width: proxyRect.width - 8,
             height: lineHeight
         )
-        NSAttributedString(string: draggedColumn.title, attributes: proxyAttrs)
+        NSAttributedString(string: title(for: draggedColumn), attributes: proxyAttrs)
             .draw(with: proxyTextRect, options: [.usesLineFragmentOrigin], context: nil)
     }
 
