@@ -1,9 +1,23 @@
 # TraceView
 NOTE: This is a fork of https://github.com/thefinder808/TraceView
 
+## Changes in this fork
+
+Additions on top of the upstream project:
+
+- **Open Recent menu** — the last 10 opened log files are remembered across launches and listed under *File → Open Recent*, with a *Clear Menu* option.
+- **Severity row colouring** — log rows are tinted by severity (critical, error, warning) consistently across the Console, Light, Dark and Neon themes, and the severity summary chips use matching per-level colours. This is configurable via the theme menu.
+- **Theme-coloured histogram bars** — error, warning and info segments in the histogram use the active theme's severity colours.
+- **Full date in timestamps** — the timestamp column shows `yyyy-MM-dd HH:mm:ss.SSS` instead of time only.
+- **Python logging timestamps** — the plain-text parser accepts comma-separated milliseconds (e.g. `2026-04-06 10:23:01,442`), as written by Python's `logging` module.
+- **Resizable histogram** — drag the handle under the histogram to make it taller (28–180 pt); the height is remembered.
+- **Histogram hover times** — moving across the histogram shows the time range of the slot under the pointer, and the tooltip shows the full date/time range plus event count.
+- **Histogram zoom** — drag across a time range to zoom into it, or scroll the mouse wheel over the strip (up zooms in around the cursor, down zooms out a level). The histogram re-buckets into 60 slots for the zoomed range, in both in-memory and indexed (large-file) modes.
+- **Zoom Out / Zoom All controls** — step back one zoom level or reset to the full time range. The selected range is shown while dragging, and the start, end and centre labels share the same larger font.
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![macOS 14+](https://img.shields.io/badge/macOS-14%2B-black.svg?logo=apple)](#requirements)
-[![Buy Me a Coffee](https://img.shields.io/badge/Buy_Me_A_Coffee-FFDD00?logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/thefinder808)
+[![Buy the original author a Coffee](https://img.shields.io/badge/Buy_Me_A_Coffee-FFDD00?logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/thefinder808)
 
 A native macOS log viewer for admins, developers, and anyone who reads too many log files. Inspired by Microsoft's CMTrace.
 
@@ -19,7 +33,7 @@ Real-time file following, severity-aware highlighting, built-in error-code looku
 - **Multi-gigabyte files** — files at or above 100 MB open in a memory-mapped *indexed mode*: the file is `mmap`'d and an offset index is built up front, so rows are decoded and parsed lazily on demand (LRU-cached) instead of loading the whole file into RAM. Severity counts and the density histogram come from compact parallel index arrays, and text/level filtering runs on a background raw-byte scanner — so a 5 GB syslog stays at 60 fps. The mode is auto-selected by file size; smaller files use the eager in-memory path. Available for line-stateless formats (PlainText, SCCM, CSV).
 - **Severity highlighting** — errors get red row backgrounds, warnings get yellow, critical rows are deeper red. Detected from structured formats (`messageType`, JSON `level`, SCCM `type`) and fallback keyword heuristics for plain text.
 - **Severity summary chips** — live per-level counts (`Critical 4 · Error 127 · Warning 342 · …`). Click to filter.
-- **Event histogram** — 60-bucket density strip above the table, stacked error/warn bars, trailing "now" marker. **Click any bucket to jump to that moment** — the click lands on the highest-severity entry in the bucket so a click on a red spike actually opens an error. **Spike preservation** keeps live-tail histograms readable: as the time range stretches, earlier spikes leave a faint shadow at their original height instead of fading into the noise floor. Auto-hides when timestamps aren't parseable.
+- **Event histogram** — 60-bucket density strip above the table, stacked error/warn bars, trailing "now" marker. **Click any bucket to jump to that moment** — the click lands on the highest-severity entry in the bucket so a click on a red spike actually opens an error. **Spike preservation** keeps live-tail histograms readable: as the time range stretches, earlier spikes leave a faint shadow at their original height instead of fading into the noise floor. **Zoom** by dragging across a time range or scrolling the mouse wheel over the strip (up zooms in around the cursor, down zooms out a level); **Zoom Out** and **Zoom All** step back. Hover shows each slot's time range, and the strip's height can be dragged larger. Auto-hides when timestamps aren't parseable.
 - **Expand-in-place drawer** — single-click any row to expand it with metadata, full message, and action pills (`Copy`, `Filter to component`, `Lookup error code`). Switchable to a bottom detail pane in Settings.
 - **Error-code lookup inspector** — built-in database spanning 13 domains: `errno`, `OSStatus`, `IOReturn`, Mach `kern_return_t`, HTTP status, CFNetwork, Cocoa (`NSError`), Security (`errSec`), POSIX signals, SQLite result codes, gRPC status, Bonjour / DNS-SD, and POSIX exit codes (`sysexits.h`). Accepts decimal, hex, symbolic, or auto-detect input, with conservative cross-domain prioritization when the input is ambiguous. Inline error codes in log messages are tappable.
 - **Saved filter presets** — snapshot the current filter to a named pill in the filter bar. Persisted.

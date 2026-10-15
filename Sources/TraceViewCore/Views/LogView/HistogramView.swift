@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 // Event-density histogram strip. Buckets are computed on the document
@@ -23,6 +24,7 @@ struct HistogramView: View {
     @State private var selectionStartX: CGFloat?
     @State private var selectionEndX: CGFloat?
     @State private var selectionChartWidth: CGFloat = 1
+    @State private var scrollMonitor = HistogramScrollWheelMonitor()
 
     var body: some View {
         let theme = themeManager.current
@@ -72,8 +74,12 @@ struct HistogramView: View {
                         bins.bars.count - 1,
                         Int(fraction * CGFloat(bins.bars.count))
                     )
+                    scrollMonitor.start { zoomIn in
+                        handleScrollZoom(zoomIn: zoomIn, anchorFraction: Double(fraction))
+                    }
                 case .ended:
                     hoveredBucket = nil
+                    scrollMonitor.stop()
                 }
             }
             .simultaneousGesture(
@@ -113,6 +119,7 @@ struct HistogramView: View {
                     }
             )
         }
+        .onDisappear { scrollMonitor.stop() }
         .frame(height: barHeight)
         .background(theme.borderSubtle)
         .clipShape(RoundedRectangle(cornerRadius: 3))
@@ -122,6 +129,22 @@ struct HistogramView: View {
                 .fill(theme.accentColor)
                 .frame(width: 1.5)
         }
+    }
+
+    /// Zooms in by halving the visible span around the cursor, or steps
+    /// back one zoom level. Reads the live histogram so repeated scrolls
+    /// without moving the mouse keep zooming from the current view.
+    private func handleScrollZoom(zoomIn: Bool, anchorFraction: Double) {
+        guard zoomIn else {
+            onZoomOut()
+            return
+        }
+        guard let bins = document.histogram, !bins.bars.isEmpty else { return }
+        let duration = bins.bucketSize * Double(bins.bars.count)
+        let newDuration = duration / 2
+        let anchor = bins.startTime.addingTimeInterval(duration * anchorFraction)
+        let start = anchor.addingTimeInterval(-newDuration * anchorFraction)
+        onZoom(DateInterval(start: start, duration: newDuration))
     }
 
     @ViewBuilder
@@ -302,4 +325,56 @@ struct HistogramView: View {
         f.dateFormat = "HH:mm:ss"
         return f
     }()
+}
+
+/// Captures scroll-wheel events while the pointer is over the histogram.
+/// SwiftUI has no scroll-wheel modifier on macOS, so this installs an
+/// NSEvent local monitor only for the duration of the hover.
+final class HistogramScrollWheelMonitor {
+    private var monitor: Any?
+    private var handler: ((Bool) -> Void)?
+    private var accumulatedDelta: CGFloat = 0
+    private var lastZoom = Date.distantPast
+
+    func start(handler: @escaping (Bool) -> Void) {
+        self.handler = handler
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+            guard let self else { return event }
+            self.handle(event)
+            return nil
+        }
+    }
+
+    func stop() {
+        if let monitor {
+            NSEvent.removeMonitor(monitor)
+        }
+        monitor = nil
+        handler = nil
+        accumulatedDelta = 0
+    }
+
+    private func handle(_ event: NSEvent) {
+        // Trackpad momentum would otherwise zoom through every level.
+        guard event.momentumPhase.isEmpty else { return }
+        let delta = event.scrollingDeltaY
+        guard delta != 0 else { return }
+
+        if (delta > 0) != (accumulatedDelta > 0) {
+            accumulatedDelta = 0
+        }
+        accumulatedDelta += delta
+
+        let threshold: CGFloat = event.hasPreciseScrollingDeltas ? 24 : 1
+        guard abs(accumulatedDelta) >= threshold,
+              Date().timeIntervalSince(lastZoom) > 0.15 else { return }
+
+        let zoomIn = accumulatedDelta > 0
+        accumulatedDelta = 0
+        lastZoom = Date()
+        handler?(zoomIn)
+    }
+
+    deinit { stop() }
 }
