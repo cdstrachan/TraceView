@@ -110,6 +110,20 @@ final class LogScrollDocumentView: NSView {
     /// Index of the selected row, or nil. Click-to-select wires this in
     /// `mouseDown`; keyboard nav (P2.3) will add ↑/↓/PgUp/PgDn handlers.
     private(set) var selectedRow: Int?
+    private var selectionAnchor: Int?
+    private var selectionAnchorID: Int?
+    private var selectedEntryID: Int?
+
+    private var selectedRows: ClosedRange<Int>? {
+        guard let selectedRow, let selectionAnchor else { return nil }
+        return min(selectionAnchor, selectedRow)...max(selectionAnchor, selectedRow)
+    }
+
+    var selectedOriginalText: String? {
+        selectedRows.map { range in
+            range.map { entries[$0].rawLine }.joined(separator: "\n")
+        }
+    }
 
     /// Fires when the selected entry changes. Parent writes through to
     /// the `selectedEntry` binding so the bottom detail pane updates and
@@ -432,9 +446,10 @@ final class LogScrollDocumentView: NSView {
         // merged-view source toggled off), clear it. P2.3 will upgrade to
         // selection-by-entry-id so the highlight survives filter churn,
         // but PR #1 keeps the simpler index-based model.
-        if let row = selectedRow, row >= entries.count {
-            selectedRow = nil
-            onSelectionChanged(nil)
+        if let row = selectedRow, let anchor = selectionAnchor,
+           row >= entries.count || anchor >= entries.count
+            || entries[row].id != selectedEntryID || entries[anchor].id != selectionAnchorID {
+            updateSelection(to: nil)
         }
 
         // Surgical invalidation. Whole-view repaints mid-scroll cause
@@ -651,12 +666,18 @@ final class LogScrollDocumentView: NSView {
         // already paused; the AppState gate makes the call a no-op.
         onScrollUp()
 
+        if event.modifierFlags.contains(.shift) {
+            updateSelection(to: row, extending: true)
+            window?.makeFirstResponder(self)
+            return
+        }
+
         // Re-click of the currently-selected row is special. In inline
         // mode the existing rowClicked logic toggles expansion (handled
         // below); in bottom-pane mode we now clear selection so the
         // bottom detail pane closes, matching the inline "re-click
         // collapses the detail" semantics.
-        let isReclick = (selectedRow == row)
+        let isReclick = selectedRow == row && selectedRows?.count == 1
 
         if inlineExpansionEnabled {
             updateSelection(to: row)
@@ -705,19 +726,20 @@ final class LogScrollDocumentView: NSView {
         scrollRowToVisible(row)
     }
 
-    private func updateSelection(to newRow: Int?) {
-        guard newRow != selectedRow else { return }
-        let oldRow = selectedRow
-        selectedRow = newRow
-
-        // Repaint only the old + new row bands. Whole-view invalidation
-        // would also work but costs us a redraw of every visible row for
-        // a one-pixel-strip change.
-        if let oldRow, oldRow < entries.count {
-            setNeedsDisplay(rowFrame(for: oldRow))
+    private func updateSelection(to newRow: Int?, extending: Bool = false) {
+        let oldRange = selectedRows
+        if !extending || selectionAnchor == nil {
+            selectionAnchor = newRow
+            selectionAnchorID = newRow.map { entries[$0].id }
         }
-        if let newRow {
-            setNeedsDisplay(rowFrame(for: newRow))
+        selectedRow = newRow
+        selectedEntryID = newRow.map { entries[$0].id }
+
+        for range in [oldRange, selectedRows].compactMap({ $0 }) {
+            guard range.lowerBound < entries.count else { continue }
+            let firstFrame = rowFrame(for: range.lowerBound)
+            let lastFrame = rowFrame(for: min(range.upperBound, entries.count - 1))
+            setNeedsDisplay(firstFrame.union(lastFrame))
         }
 
         let entry: LogEntry? = newRow.flatMap { $0 < entries.count ? entries[$0] : nil }
@@ -759,8 +781,21 @@ final class LogScrollDocumentView: NSView {
         // Keyboard nav is also investigative — pause follow before
         // moving the selection, same as click selection.
         onScrollUp()
-        updateSelection(to: newRow)
+        updateSelection(to: newRow, extending: event.modifierFlags.contains(.shift))
         scrollRowToVisible(newRow)
+    }
+
+    @objc func copy(_ sender: Any?) {
+        guard let original = selectedOriginalText else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(original, forType: .string)
+    }
+
+    override func selectAll(_ sender: Any?) {
+        guard !entries.isEmpty else { return }
+        onScrollUp()
+        updateSelection(to: 0)
+        updateSelection(to: entries.count - 1, extending: true)
     }
 
     /// How many full rows fit in the visible viewport. Used for PgUp/PgDn
@@ -792,7 +827,18 @@ final class LogScrollDocumentView: NSView {
         // it. Also select the clicked row so a subsequent ⌘D keyboard
         // shortcut operates on the same entry as the visible context.
         contextMenuEntry = entries[row]
-        updateSelection(to: row)
+        if selectedRows?.contains(row) != true {
+            updateSelection(to: row)
+        }
+        window?.makeFirstResponder(self)
+
+        let copyItem = NSMenuItem(
+            title: "Copy Original", action: #selector(copy(_:)), keyEquivalent: "c"
+        )
+        copyItem.keyEquivalentModifierMask = .command
+        copyItem.target = self
+        menu.addItem(copyItem)
+        menu.addItem(NSMenuItem.separator())
 
         let bookmarkItem = NSMenuItem(
             title: "Toggle Bookmark",
@@ -1029,7 +1075,7 @@ final class LogScrollDocumentView: NSView {
             // Selection band — accent color at 0.20 alpha, composed over
             // the severity background. Matches NSLogTableView's selection
             // styling at NSLogTableView.swift:870-882.
-            if row == selectedRow {
+            if selectedRows?.contains(row) == true {
                 NSColor(theme.accentColor).withAlphaComponent(0.2).setFill()
                 rowRect.intersection(dirtyRect).fill()
             }

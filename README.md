@@ -21,6 +21,8 @@ Additions on top of the upstream project:
 - **Flexible delimited logs** — local files (including `.gz`) auto-detect comma, semicolon, tab, and pipe separators. The status-bar format menu lets you choose a separator, including hyphen or a custom single character, and remembers the choice per file. Headers are detected automatically; headerless logs infer timestamp, severity, and message columns, with generic `Column N` labels in details. Use *First row → Headers / No headers* to correct ambiguous detection. When the file has a header row, column titles use the file's own header names. The grid shows every field of the file in its original order (no separate Component column), titled from the header row or `Column N`; column order can't be dragged for delimited files, and you can scroll horizontally when they don't fit. Raw records remain unchanged and exports still use standard comma-separated CSV.
 - **Clickable following status** — click *Following* or *Not following* at the bottom right to toggle auto-scroll for that pane. Resuming jumps to the latest lines; scroll-synced panes toggle together. Live-stream ingestion remains controlled separately by *Pause / Resume*.
 - **Clear Filters** — use *Filter → Clear Filters* or right-click the log grid (including empty space) to reset text, severity, component, and merged-source filters for that pane. Regex and case-sensitive options reset too; saved presets and the Filter/Find mode are unchanged.
+- **Copy original record ranges** — click a record, then Shift-click another to select the visible range, or extend it with Shift and the navigation keys. Use Command-C or right-click → *Copy Original* to copy the raw records in display order, separated by newlines. Command-A selects all visible records.
+- **Independent windows** — use *File → New Window* (Command-N) to open another window with its own documents, tabs, filters, selection, and split panes. Menu actions target the focused window; theme and settings remain shared.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![macOS 14+](https://img.shields.io/badge/macOS-14%2B-black.svg?logo=apple)](#requirements)
@@ -194,4 +196,4 @@ Supported formats: PlainText (BSD-syslog, dated-syslog), SCCM (CMTrace), CSV. IP
 
 ## Support
 
-TraceView is free and open source. If it saved you an hour of log-staring, you can [buy me a coffee](https://buymeacoffee.com/thefinder808) — zero pressure, always welcome.
+TraceView is free and open source. If it saved you an hour of log-staring, you can [buy me a coffee](https://buymeacoffee.com/thefinder808) — zero pressure, always welcome. (Craig note - this is coffee for the original author)

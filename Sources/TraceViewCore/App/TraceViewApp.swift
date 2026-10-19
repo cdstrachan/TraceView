@@ -19,40 +19,20 @@ public struct TraceViewApp: App {
     public init() {}
 
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @StateObject private var appState = AppState()
+    @FocusedObject private var focusedAppState: AppState?
+    @Environment(\.openWindow) private var openWindow
     @StateObject private var themeManager = ThemeManager()
     @StateObject private var settingsManager = SettingsManager()
     @StateObject private var updater = UpdaterService()
 
     public var body: some Scene {
-        WindowGroup {
-            ContentView()
-                .environmentObject(appState)
+        WindowGroup(id: "logs") {
+            TraceWindowView()
                 .environmentObject(themeManager)
                 .environmentObject(settingsManager)
                 .environmentObject(updater)
                 .background(themeManager.current.windowBackground)
                 .preferredColorScheme(colorScheme)
-                .onDrop(of: [.fileURL], isTargeted: nil) { providers in
-                    for provider in providers {
-                        _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                            if let url {
-                                DispatchQueue.main.async {
-                                    appState.openFile(at: url)
-                                }
-                            }
-                        }
-                    }
-                    return true
-                }
-                // Handles file URLs delivered via the AppleEvent open-document
-                // path: `open -a TraceView.app /file`, right-click → Open With →
-                // TraceView, double-click a .log in Finder, or any other system
-                // mechanism that routes a file to the app. Without this, those
-                // paths silently no-op (the app launches but never sees the URL).
-                .onOpenURL { url in
-                    appState.openFile(at: url)
-                }
         }
         .defaultSize(width: 1100, height: 700)
         .windowResizability(.contentMinSize)
@@ -67,6 +47,14 @@ public struct TraceViewApp: App {
                 .disabled(!updater.canCheckForUpdates)
             }
 
+            CommandGroup(before: .newItem) {
+                Button("New Window") {
+                    openWindow(id: "logs")
+                }
+                .keyboardShortcut("n", modifiers: .command)
+            }
+
+            if let appState = focusedAppState {
             // File menu
             CommandGroup(replacing: .newItem) {
                 Button("Open Log File...") { appState.openFile(into: .primary) }
@@ -247,6 +235,8 @@ public struct TraceViewApp: App {
                 .keyboardShortcut("0", modifiers: .command)
             }
 
+            }
+
             // Theme menu
             CommandMenu("Theme") {
                 ForEach(ThemeOption.allCases) { option in
@@ -285,3 +275,29 @@ public struct TraceViewApp: App {
         }
     }
 }
+
+private struct TraceWindowView: View {
+    @StateObject private var appState = AppState()
+
+    var body: some View {
+        ContentView()
+            .environmentObject(appState)
+            .focusedSceneObject(appState)
+            .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+                for provider in providers {
+                    _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                        if let url {
+                            DispatchQueue.main.async {
+                                appState.openFile(at: url)
+                            }
+                        }
+                    }
+                }
+                return true
+            }
+            .onOpenURL { url in
+                appState.openFile(at: url)
+            }
+    }
+}
+
